@@ -72,3 +72,11 @@ The work is split into **12 steps**, grouped into 3 natural tracks so each teamm
 
 > 🏁 **Prototype 1 is reached at the end of Step 12 — due September 20.** At that point we'll have a working demo: fraud reporting in Twi by voice/text/buttons on WhatsApp, a basic-phone USSD version, AI-structured cases with tracking numbers, fraud alerts, and an MTN staff dashboard.
 
+---
+
+## Progress Log
+
+- **Sept 11** — Step 1 done: Khaya ASR + TTS API confirmed working (Twi supported), Anthropic LLM key confirmed working, repo scaffolded with a running Node.js backend.
+- **Sept 11** — Twilio (WhatsApp) sandbox setup paused — waiting on a teammate's phone number to verify the account.
+- **Sept 11** — Africa's Talking (USSD) setup blocked for now: creating a USSD channel needs a public callback URL, which we don't have yet (backend isn't deployed/exposed online). Will come back to this once the backend has a reachable URL.
+
