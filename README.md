@@ -40,27 +40,24 @@ In Ghana, a lot of people get scammed on Mobile Money, but reporting fraud today
 
 ---
 
-## The 15 Steps to Prototype 1
+## The 12 Steps to Prototype 1
 
-The work is split into **15 steps**. Each teammate can take about **5 steps**. Steps are in order — most steps depend on the one(s) before them.
+The work is split into **12 steps**, grouped into 3 natural tracks so each teammate can own one track (4 steps each). Steps are in order — most depend on the one(s) before them.
 
-1. **Pick the tools.** Decide which speech-to-text (ASR), AI (LLM), and text-to-speech (TTS) services we'll use for Twi, and get the API access/keys needed.
-2. **Set up the project.** Create the shared code folders, the database, and make sure all 3 of us can run the project on our own laptops.
-3. **Speech-to-text.** Get a Twi voice recording converted into text.
-4. **AI case builder.** Take that text (from voice or typed) and have the AI turn it into a clean case file (date, amount, fraud type, suspect number...), flagging anything missing.
-5. **Follow-up questions.** When something is missing, have the AI ask the customer one clear question in Twi to fill the gap.
-6. **Case numbers & tracking.** Every report gets saved with a unique case number the customer can check later.
-7. **Text-to-speech.** Turn the final confirmation summary into spoken Twi audio for the customer.
-8. **WhatsApp connection.** Connect the project to WhatsApp so people can actually send messages to it.
-9. **WhatsApp reporting flow.** Build the full conversation on WhatsApp: choose voice/text/buttons → report → confirmation with case number.
-10. **USSD reporting flow.** Build the same reporting steps as a basic-phone USSD menu (simulated, no internet needed).
-11. **Fraud alerts.** If a suspect number/pattern shows up in more than one report, automatically notify the other affected customers.
-12. **MTN dashboard.** Build a simple webpage where MTN staff can see all cases, listen to the original audio, and update case status.
-13. **Accessibility check.** Make sure everything works well for blind, deaf, speech-impaired, and low-literacy users (clear labels, one step at a time, spoken summaries, no PIN ever asked).
-14. **Full testing.** Try the entire flow ourselves end-to-end (WhatsApp + USSD + dashboard) and fix the bugs we find.
-15. **Prepare and rehearse the demo.** Write the demo script, record a backup video, and rehearse presenting it together.
+1. **Stack & setup.** Decide which speech-to-text (ASR), AI (LLM), and text-to-speech (TTS) services we'll use for Twi, get the API access/keys needed, and set up the shared project (repo, database, environments) so all 3 of us can run it locally.
+2. **Speech-to-text (ASR).** Get a Twi voice recording converted into text.
+3. **AI case builder (LLM).** Take that text (from voice or typed) and turn it into a clean case file (date, amount, fraud type, suspect number...), flagging anything missing and generating a follow-up question in Twi when needed.
+4. **Text-to-speech (TTS).** Turn the final confirmation summary into spoken Twi audio for the customer, with a pre-recorded fallback.
+5. **Case tracking.** Every report gets saved with a unique case number and a status the customer can check later.
+6. **WhatsApp bot.** Connect to WhatsApp and build the full conversation: choose voice/text/buttons → report → confirmation with case number → status check.
+7. **USSD flow.** Build the same reporting steps as a basic-phone USSD menu (simulated, no internet needed), feeding into the same case system.
+8. **Fraud alerts.** If a suspect number/pattern shows up in more than one report, automatically notify the other affected customers.
+9. **MTN dashboard.** Build a simple webpage where MTN staff can see all cases, listen to the original audio, and update case status.
+10. **Accessibility pass.** Make sure everything works well for blind, deaf, speech-impaired, and low-literacy users (clear labels, one step at a time, spoken summaries, no PIN ever asked).
+11. **Full testing.** Try the entire flow together end-to-end (WhatsApp + USSD + dashboard) and fix the bugs found.
+12. **Demo prep.** Write the demo script, record a backup video, and rehearse presenting it together.
 
-> 🏁 **Prototype 1 is reached at the end of Step 15 — due September 20.** At that point we'll have a working demo: fraud reporting in Twi by voice/text/buttons on WhatsApp, a basic-phone USSD version, AI-structured cases with tracking numbers, fraud alerts, and an MTN staff dashboard.
+> 🏁 **Prototype 1 is reached at the end of Step 12 — due September 20.** At that point we'll have a working demo: fraud reporting in Twi by voice/text/buttons on WhatsApp, a basic-phone USSD version, AI-structured cases with tracking numbers, fraud alerts, and an MTN staff dashboard.
 
 ---
 
