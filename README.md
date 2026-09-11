@@ -94,4 +94,5 @@ The work is split into **12 steps**, grouped into 3 natural tracks so each teamm
 - **Sept 11** — Step 2 done: `asr.js` written — sends audio to Khaya ASR and returns the Twi transcript.
 - **Sept 11** — Step 3 done: `llm.js` written — sends the transcript to Claude, which returns a structured case, flags missing fields, and writes Twi follow-up questions.
 - **Sept 11** — Tasks assigned: Euriel → AI pipeline, Adlai → case tracking + WhatsApp bot, Ola → dashboard.
+- **Sept 11** — Step 4 done: `tts.js` written — sends Twi text to Khaya TTS and returns the spoken audio. **Euriel's AI pipeline track (Steps 2-4) is now complete.**
 
