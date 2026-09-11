@@ -40,6 +40,19 @@ In Ghana, a lot of people get scammed on Mobile Money, but reporting fraud today
 
 ---
 
+## Tools & APIs We're Using
+
+| Tool | What it's for |
+|---|---|
+| **Khaya AI (GhanaNLP)** | Converts Twi voice to text (ASR) and text to Twi voice (TTS). |
+| **Anthropic (Claude)** | The AI that reads/hears the report and turns it into a structured case file. |
+| **Twilio** | Connects our bot to WhatsApp, so customers can report fraud by chatting with us there. |
+| **Africa's Talking** | Simulates a USSD menu, so customers on basic phones (no internet) can report fraud too. |
+| **Node.js + Express** | The backend server that ties everything together (receives messages, calls the AI, saves cases). |
+| **SQLite** | The database that stores each case (case number, status, details). |
+
+---
+
 ## The 12 Steps to Prototype 1
 
 The work is split into **12 steps**, grouped into 3 natural tracks so each teammate can own one track (4 steps each). Steps are in order — most depend on the one(s) before them.
