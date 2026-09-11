@@ -53,6 +53,18 @@ In Ghana, a lot of people get scammed on Mobile Money, but reporting fraud today
 
 ---
 
+## Task Assignment
+
+| Who | Owns |
+|---|---|
+| **Euriel** | AI pipeline — ASR, LLM case builder, TTS (Steps 2, 3, 4) |
+| **Adlai** | Case tracking + WhatsApp bot (Steps 5, 6) |
+| **Ola** | Agent dashboard (Step 9) |
+
+USSD (Step 7), fraud alerts (Step 8), accessibility (10), testing (11), and demo prep (12) will be picked up once the above are done.
+
+---
+
 ## The 12 Steps to Prototype 1
 
 The work is split into **12 steps**, grouped into 3 natural tracks so each teammate can own one track (4 steps each). Steps are in order — most depend on the one(s) before them.
