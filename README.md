@@ -91,4 +91,7 @@ The work is split into **12 steps**, grouped into 3 natural tracks so each teamm
 - **Sept 11** — Step 1 done: Khaya ASR + TTS API confirmed working (Twi supported), Anthropic LLM key confirmed working, repo scaffolded with a running Node.js backend.
 - **Sept 11** — Twilio (WhatsApp) turned out to cost $20 for Ghana numbers — looking for a free/cheaper alternative for the WhatsApp channel.
 - **Sept 11** — Africa's Talking (USSD) setup blocked for now: creating a USSD channel needs a public callback URL, which we don't have yet (backend isn't deployed/exposed online). Will come back to this once the backend has a reachable URL.
+- **Sept 11** — Step 2 done: `asr.js` written — sends audio to Khaya ASR and returns the Twi transcript.
+- **Sept 11** — Step 3 done: `llm.js` written — sends the transcript to Claude, which returns a structured case, flags missing fields, and writes Twi follow-up questions.
+- **Sept 11** — Tasks assigned: Euriel → AI pipeline, Adlai → case tracking + WhatsApp bot, Ola → dashboard.
 
