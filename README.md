@@ -64,25 +64,8 @@ The work is split into **15 steps**. Each teammate can take about **5 steps**. S
 
 ---
 
-## Meeting Log
-
-| Date | Attendees | Decisions | Action items | Next sync |
-|---|---|---|---|---|
-| _(kickoff meeting — TBD)_ | | | | |
-
----
-
 ## Working agreements
 
 - **Branching**: feature branches off `main`, PR + at least one review before merge.
 - **Task tracking**: one GitHub Issue per step, assigned to whoever takes it.
 - **Definition of done**: works in the WhatsApp/USSD demo, never touches the PIN, doesn't crash on a missing field.
-
----
-
-## References
-
-- Bank of Ghana (2025). *2025 Fraud Report: Banks, Specialised Deposit-Taking Institutions and Payment Service Providers.*
-- E-Crime Bureau (2024). *Digital Fraud Analysis Report.*
-- Ghana Statistical Service (2021). *Ghana 2021 Population and Housing Census: Disability Report.*
-- INTERPOL (2026). *African Cyberthreat Assessment Report 2026.*
