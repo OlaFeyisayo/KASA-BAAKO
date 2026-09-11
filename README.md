@@ -44,7 +44,7 @@ In Ghana, a lot of people get scammed on Mobile Money, but reporting fraud today
 
 The work is split into **12 steps**, grouped into 3 natural tracks so each teammate can own one track (4 steps each). Steps are in order — most depend on the one(s) before them.
 
-1. **Stack & setup.** Decide which speech-to-text (ASR), AI (LLM), and text-to-speech (TTS) services we'll use for Twi, get the API access/keys needed, and set up the shared project (repo, database, environments) so all 3 of us can run it locally.
+1. ✅ **Stack & setup.** Decide which speech-to-text (ASR), AI (LLM), and text-to-speech (TTS) services we'll use for Twi, get the API access/keys needed, and set up the shared project (repo, database, environments) so all 3 of us can run it locally. *(Done: Khaya ASR+TTS and Anthropic LLM keys confirmed working, repo scaffolded with a running backend.)*
 2. **Speech-to-text (ASR).** Get a Twi voice recording converted into text.
 3. **AI case builder (LLM).** Take that text (from voice or typed) and turn it into a clean case file (date, amount, fraud type, suspect number...), flagging anything missing and generating a follow-up question in Twi when needed.
 4. **Text-to-speech (TTS).** Turn the final confirmation summary into spoken Twi audio for the customer, with a pre-recorded fallback.
@@ -59,10 +59,3 @@ The work is split into **12 steps**, grouped into 3 natural tracks so each teamm
 
 > 🏁 **Prototype 1 is reached at the end of Step 12 — due September 20.** At that point we'll have a working demo: fraud reporting in Twi by voice/text/buttons on WhatsApp, a basic-phone USSD version, AI-structured cases with tracking numbers, fraud alerts, and an MTN staff dashboard.
 
----
-
-## Working agreements
-
-- **Branching**: feature branches off `main`, PR + at least one review before merge.
-- **Task tracking**: one GitHub Issue per step, assigned to whoever takes it.
-- **Definition of done**: works in the WhatsApp/USSD demo, never touches the PIN, doesn't crash on a missing field.
