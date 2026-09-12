@@ -96,4 +96,6 @@ The work is split into **12 steps**, grouped into 3 natural tracks so each teamm
 - **Sept 11** — Tasks assigned: Euriel → AI pipeline, Adlai → case tracking + WhatsApp bot, Ola → dashboard.
 - **Sept 11** — Step 4 done: `tts.js` written — sends Twi text to Khaya TTS and returns the spoken audio. **Euriel's AI pipeline track (Steps 2-4) is now complete.**
 - **Sept 12** — Step 9 (dashboard) first version done by Ola: React + Vite + Tailwind app with case list, filters, status changes, and audio playback, using sample data. Fixed a broken import and a duplicate line before merging.
+- **Sept 12** — Ola asked to add a login screen to the dashboard — no authentication exists yet, which is a real security gap before connecting it to the real backend.
+- **Sept 12** — Step 8 done: `alerts.js` written — matches a new case's suspected number against existing cases (30-day window) and builds a Twi alert message. ⚠️ The Twi message text is not yet verified by a native speaker — needs review before the demo.
 
