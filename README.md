@@ -99,4 +99,5 @@ The work is split into **12 steps**, grouped into 3 natural tracks so each teamm
 - **Sept 12** — Ola asked to add a login screen to the dashboard — no authentication exists yet, which is a real security gap before connecting it to the real backend.
 - **Sept 12** — Step 8 done: `alerts.js` written — matches a new case's suspected number against existing cases (30-day window) and builds a Twi alert message. ⚠️ The Twi message text is not yet verified by a native speaker — needs review before the demo.
 - **Sept 12** — Added mass-alert escalation to `alerts.js`: if a suspected number is reported 5+ times, instead of just notifying past reporters, an English notice is generated for the MTN dashboard suggesting a mass customer alert.
+- **Sept 12** — Added `POST /report` route in `server.js`: chains ASR → LLM → TTS into one call (voice or text in, structured case + confirmation audio out). Adlai's WhatsApp/USSD code will call this, then save the result and check it against `alerts.js`.
 
