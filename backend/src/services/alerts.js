@@ -6,6 +6,18 @@ const MATCH_WINDOW_DAYS = 30;
 const MTN_ESCALATION_THRESHOLD = 5;
 
 /**
+ * Normalizes a Ghanaian phone number so equivalent formats compare equal
+ * (e.g. "0244123456", "+233244123456", "233244123456" all become "244123456").
+ */
+function normalizePhoneNumber(number) {
+  if (!number) return "";
+  let digits = String(number).replace(/\D/g, "");
+  if (digits.startsWith("233")) digits = digits.slice(3);
+  else if (digits.startsWith("0")) digits = digits.slice(1);
+  return digits;
+}
+
+/**
  * Finds existing cases that share the new case's suspected number and
  * were reported within the last MATCH_WINDOW_DAYS days.
  *
@@ -19,11 +31,14 @@ export function findMatchingCases(newCase, existingCases) {
   const windowMs = MATCH_WINDOW_DAYS * 24 * 60 * 60 * 1000;
   const newCaseTime = new Date(newCase.created_at).getTime();
 
+  const newNumber = normalizePhoneNumber(newCase.suspected_number);
+
   return existingCases.filter((c) => {
     if (c.case_id === newCase.case_id) return false;
-    if (c.suspected_number !== newCase.suspected_number) return false;
+    if (normalizePhoneNumber(c.suspected_number) !== newNumber) return false;
 
     const caseTime = new Date(c.created_at).getTime();
+    if (Number.isNaN(newCaseTime) || Number.isNaN(caseTime)) return false;
     return Math.abs(newCaseTime - caseTime) <= windowMs;
   });
 }

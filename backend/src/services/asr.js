@@ -2,6 +2,7 @@
 // API: https://translation-api.ghananlp.org/asr/v3
 
 const ASR_BASE_URL = "https://translation-api.ghananlp.org/asr/v3";
+const REQUEST_TIMEOUT_MS = 15000;
 
 /**
  * Transcribes an audio clip to text using the Khaya ASR v3 API.
@@ -20,14 +21,26 @@ export async function transcribeAudio(audioBuffer, options = {}) {
   url.searchParams.set("language", language);
   if (timestamps) url.searchParams.set("timestamps", timestamps);
 
-  const response = await fetch(url, {
-    method: "POST",
-    headers: {
-      "Content-Type": contentType,
-      "Ocp-Apim-Subscription-Key": process.env.KHAYA_API_KEY,
-    },
-    body: audioBuffer,
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+  let response;
+  try {
+    response = await fetch(url, {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        "Content-Type": contentType,
+        "Ocp-Apim-Subscription-Key": process.env.KHAYA_API_KEY,
+      },
+      body: audioBuffer,
+    });
+  } catch (err) {
+    if (err.name === "AbortError") throw new Error("Khaya ASR request timed out");
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
 
   const data = await response.json();
 

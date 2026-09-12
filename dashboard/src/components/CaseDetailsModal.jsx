@@ -1,4 +1,5 @@
 import StatusBadge from './StatusBadge'
+import { formatAmount } from '../utils/formatAmount'
 function CaseDetailsModal({ caseData, onClose, onStatusChange }) {
   if (!caseData) return null
 
@@ -25,7 +26,7 @@ function CaseDetailsModal({ caseData, onClose, onStatusChange }) {
           <p><span className="font-medium text-slate-500">Language:</span> {caseData.language}</p>
           <p><span className="font-medium text-slate-500">Incident Summary:</span> {caseData.incident_summary}</p>
           <p><span className="font-medium text-slate-500">Incident Date:</span> {caseData.incident_date}</p>
-          <p><span className="font-medium text-slate-500">Amount:</span> GHS {caseData.amount.toFixed(2)}</p>
+          <p><span className="font-medium text-slate-500">Amount:</span> {formatAmount(caseData.amount)}</p>
           <p><span className="font-medium text-slate-500">Fraud Category:</span> {caseData.fraud_category}</p>
           <p><span className="font-medium text-slate-500">Suspected Number:</span> {caseData.suspected_number || 'Not provided'}</p>
           <p><span className="font-medium text-slate-500">Transaction ID:</span> {caseData.transaction_id || 'Not provided'}</p>

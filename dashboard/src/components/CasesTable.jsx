@@ -1,4 +1,5 @@
 import StatusBadge from './StatusBadge'
+import { formatAmount } from '../utils/formatAmount'
 function CasesTable({ cases, onViewDetails }) {
   return (
     <div className="bg-white rounded-lg border border-slate-200 shadow-sm overflow-hidden mt-6">
@@ -24,7 +25,7 @@ function CasesTable({ cases, onViewDetails }) {
               <td className="px-4 py-3 capitalize">{c.channel}</td>
               <td className="px-4 py-3 capitalize">{c.input_mode}</td>
               <td className="px-4 py-3">{c.fraud_category}</td>
-              <td className="px-4 py-3">GHS {c.amount.toFixed(2)}</td>
+              <td className="px-4 py-3">{formatAmount(c.amount)}</td>
               <td className="px-4 py-3">{c.incident_date}</td>
               <td className="px-4 py-3"><StatusBadge status={c.status} /></td>
               <td className="px-4 py-3">

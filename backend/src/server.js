@@ -1,10 +1,12 @@
 import "dotenv/config";
 import express from "express";
+import cors from "cors";
 import { transcribeAudio } from "./services/asr.js";
 import { buildCase } from "./services/llm.js";
 import { synthesizeSpeech } from "./services/tts.js";
 
 const app = express();
+app.use(cors({ origin: process.env.DASHBOARD_ORIGIN || "*" }));
 app.use(express.json());
 
 app.get("/health", (req, res) => {
@@ -44,8 +46,8 @@ app.post(
 
       res.json({ ...result, confirmation_audio_base64: confirmationAudioBase64 });
     } catch (err) {
-      console.error(err);
-      res.status(500).json({ error: err.message });
+      console.error("[/report]", err);
+      res.status(500).json({ error: "Something went wrong processing this report. Please try again." });
     }
   }
 );

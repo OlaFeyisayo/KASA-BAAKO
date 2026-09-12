@@ -2,6 +2,7 @@
 // API: https://translation-api.ghananlp.org/tts/v2
 
 const TTS_BASE_URL = "https://translation-api.ghananlp.org/tts/v2";
+const REQUEST_TIMEOUT_MS = 15000;
 
 /**
  * Synthesizes Twi text into spoken audio using the Khaya TTS v2 API.
@@ -16,19 +17,31 @@ const TTS_BASE_URL = "https://translation-api.ghananlp.org/tts/v2";
 export async function synthesizeSpeech(text, options = {}) {
   const { language = "twi", speakerId, format = "wav" } = options;
 
-  const response = await fetch(`${TTS_BASE_URL}/synthesize`, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      "Ocp-Apim-Subscription-Key": process.env.KHAYA_API_KEY,
-    },
-    body: JSON.stringify({
-      text,
-      language,
-      speaker_id: speakerId,
-      format,
-    }),
-  });
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
+
+  let response;
+  try {
+    response = await fetch(`${TTS_BASE_URL}/synthesize`, {
+      method: "POST",
+      signal: controller.signal,
+      headers: {
+        "Content-Type": "application/json",
+        "Ocp-Apim-Subscription-Key": process.env.KHAYA_API_KEY,
+      },
+      body: JSON.stringify({
+        text,
+        language,
+        speaker_id: speakerId,
+        format,
+      }),
+    });
+  } catch (err) {
+    if (err.name === "AbortError") throw new Error("Khaya TTS request timed out");
+    throw err;
+  } finally {
+    clearTimeout(timeout);
+  }
 
   if (!response.ok) {
     const data = await response.json();

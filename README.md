@@ -100,4 +100,18 @@ The work is split into **12 steps**, grouped into 3 natural tracks so each teamm
 - **Sept 12** — Step 8 done: `alerts.js` written — matches a new case's suspected number against existing cases (30-day window) and builds a Twi alert message. ⚠️ The Twi message text is not yet verified by a native speaker — needs review before the demo.
 - **Sept 12** — Added mass-alert escalation to `alerts.js`: if a suspected number is reported 5+ times, instead of just notifying past reporters, an English notice is generated for the MTN dashboard suggesting a mass customer alert.
 - **Sept 12** — Added `POST /report` route in `server.js`: chains ASR → LLM → TTS into one call (voice or text in, structured case + confirmation audio out). Adlai's WhatsApp/USSD code will call this, then save the result and check it against `alerts.js`.
+- **Sept 12** — Full security/reliability pass across the codebase. Fixed: LLM output is now revalidated and type-checked ourselves instead of trusted as-is (blocks prompt-injection-style tampering and bad `amount` values), added a fallback to strip markdown fences from LLM JSON responses, added request timeouts to all 3 external API calls (ASR/LLM/TTS), normalized phone number comparison in `alerts.js` (also fixes a silent bug with malformed dates), stopped leaking raw internal error messages to API callers, added CORS, added DB indexes on `suspected_number`/`status`, added a non-guessable case ID generator (`utils/caseId.js`) with a note that case lookup must also verify the requester's phone number, added a React Error Boundary and a safe amount formatter to the dashboard so one bad value can't blank-screen it.
+
+---
+
+## Known Issues — To Check Later
+
+Found during the security pass but not fixed yet (either low priority for the prototype, or blocked on other work). Check these off once addressed:
+
+- [ ] **`POST /report` has no authentication** — anyone with the URL can call it and use up our API quotas. Needs at least a shared-secret header once we know how WhatsApp/USSD will call it.
+- [ ] **Khaya "Developer" plan is capped at 100 calls/month** (shared across ASR+TTS, across all 3 of us testing) — could run out before the demo. Watch usage; consider the paid Basic tier ($14.95/mo) if we get close.
+- [ ] **Twilio/Africa's Talking webhooks aren't signature-verified yet** — once Adlai wires them up, must confirm requests really come from Twilio/Africa's Talking, not just anyone posting to the URL.
+- [ ] **No leaked-secret check before demo/screen-sharing** — make sure `.env` or API keys never appear on screen during rehearsals or the presentation.
+- [ ] **No automated tests** — worth adding at least a few once the WhatsApp/USSD flows are done, given 3 people are touching the code.
+- [ ] **Sample audio in `dashboard/src/data/sampleCases.js` is hosted on Google's servers** — could break if unreachable during the demo; consider hosting our own sample file instead.
 

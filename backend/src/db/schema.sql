@@ -16,3 +16,6 @@ CREATE TABLE IF NOT EXISTS cases (
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
+
+CREATE INDEX IF NOT EXISTS idx_cases_suspected_number ON cases (suspected_number);
+CREATE INDEX IF NOT EXISTS idx_cases_status ON cases (status);
