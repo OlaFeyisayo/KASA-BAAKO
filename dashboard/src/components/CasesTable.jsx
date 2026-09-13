@@ -1,4 +1,5 @@
 import StatusBadge from './StatusBadge'
+import { formatAmount } from '../utils/formatAmount'
 
 function SortableHeader({ label, sortKey, sortConfig, onSort }) {
   const isActive = sortConfig.key === sortKey
@@ -49,7 +50,7 @@ function CasesTable({ cases, onViewDetails, sortConfig, onSort }) {
               <td className="px-4 py-3 capitalize text-slate-700 dark:text-slate-300">{c.channel}</td>
               <td className="px-4 py-3 capitalize text-slate-700 dark:text-slate-300">{c.input_mode}</td>
               <td className="px-4 py-3 text-slate-700 dark:text-slate-300">{c.fraud_category}</td>
-              <td className="px-4 py-3 text-slate-700 dark:text-slate-300">GHS {c.amount.toFixed(2)}</td>
+              <td className="px-4 py-3 text-slate-700 dark:text-slate-300">{formatAmount(c.amount)}</td>
               <td className="px-4 py-3 text-slate-700 dark:text-slate-300">{c.incident_date}</td>
               <td className="px-4 py-3"><StatusBadge status={c.status} /></td>
               <td className="px-4 py-3">

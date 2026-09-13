@@ -77,8 +77,8 @@ The work is split into **12 steps**, grouped into 3 natural tracks so each teamm
 6. **WhatsApp bot.** Connect to WhatsApp and build the full conversation: choose voice/text/buttons → report → confirmation with case number → status check.
 7. **USSD flow.** Build the same reporting steps as a basic-phone USSD menu (simulated, no internet needed), feeding into the same case system.
 8. **Fraud alerts.** If a suspect number/pattern shows up in more than one report, automatically notify the other affected customers.
-9. **MTN dashboard.** Build a simple webpage where MTN staff can see all cases, listen to the original audio, and update case status.
-10. **Accessibility pass.** Make sure everything works well for blind, deaf, speech-impaired, and low-literacy users (clear labels, one step at a time, spoken summaries, no PIN ever asked).
+9. ✅ **MTN dashboard.** Build a simple webpage where MTN staff can see all cases, listen to the original audio, and update case status.
+10. ✅ **Accessibility pass** *(dashboard side — done; WhatsApp/USSD conversation flows still need this once built).* Make sure everything works well for blind, deaf, speech-impaired, and low-literacy users (clear labels, one step at a time, spoken summaries, no PIN ever asked).
 11. **Full testing.** Try the entire flow together end-to-end (WhatsApp + USSD + dashboard) and fix the bugs found.
 12. **Demo prep.** Write the demo script, record a backup video, and rehearse presenting it together.
 
@@ -104,6 +104,7 @@ The work is split into **12 steps**, grouped into 3 natural tracks so each teamm
 - **Sept 12** — Added a first automated test suite (`alerts.test.js`, 8 tests, `npm test` in `backend/`) covering phone number matching, the 30-day window, malformed dates, and the MTN escalation threshold. Ola is handling the dashboard accessibility pass separately.
 - **Sept 12** — Drafted `docs/DEMO_SCRIPT.md`: section-by-section demo plan, contingency plan if something fails live, and a placeholder for who presents what. Sections needing WhatsApp/USSD/dashboard-login are marked ⏳ until those are done.
 - **Sept 12** — Removed `dashboard/` from `main` so Ola can upload her updated code (with login) directly to GitHub without conflicting with what was already there. The previous version (bug fixes + security/accessibility hardening) is preserved on the `backup/dashboard-with-euriel-fixes` branch — once Ola's new upload is in, merge those fixes back in rather than redoing them.
+- **Sept 13** — Ola uploaded the updated dashboard: login screen, dark mode, case search, sortable columns, an empty-state message, and — on her own — most of the accessibility fixes we'd flagged (Esc-to-close, focus trap, `aria-label`/`aria-modal` on the modal, labels properly linked to their inputs, mobile-friendly table scroll). **Step 9 and most of Step 10 are now done.** Reapplied the one thing her version didn't have yet: the safe amount formatter + React Error Boundary, so a bad `amount` value still can't crash the page.
 
 ---
 

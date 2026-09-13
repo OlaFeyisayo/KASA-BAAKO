@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react'
 import StatusBadge from './StatusBadge'
+import { formatAmount } from '../utils/formatAmount'
 
 function CaseDetailsModal({ caseData, onClose, onStatusChange }) {
   const modalRef = useRef(null)
@@ -57,7 +58,7 @@ function CaseDetailsModal({ caseData, onClose, onStatusChange }) {
           <p><span className="font-medium text-slate-500 dark:text-slate-400">Language:</span> {caseData.language}</p>
           <p><span className="font-medium text-slate-500 dark:text-slate-400">Incident Summary:</span> {caseData.incident_summary}</p>
           <p><span className="font-medium text-slate-500 dark:text-slate-400">Incident Date:</span> {caseData.incident_date}</p>
-          <p><span className="font-medium text-slate-500 dark:text-slate-400">Amount:</span> GHS {caseData.amount.toFixed(2)}</p>
+          <p><span className="font-medium text-slate-500 dark:text-slate-400">Amount:</span> {formatAmount(caseData.amount)}</p>
           <p><span className="font-medium text-slate-500 dark:text-slate-400">Fraud Category:</span> {caseData.fraud_category}</p>
           <p><span className="font-medium text-slate-500 dark:text-slate-400">Suspected Number:</span> {caseData.suspected_number || 'Not provided'}</p>
           <p><span className="font-medium text-slate-500 dark:text-slate-400">Transaction ID:</span> {caseData.transaction_id || 'Not provided'}</p>
