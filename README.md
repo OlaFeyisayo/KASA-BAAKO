@@ -70,13 +70,13 @@ USSD (Step 7), fraud alerts (Step 8), accessibility (10), testing (11), and demo
 The work is split into **12 steps**, grouped into 3 natural tracks so each teammate can own one track (4 steps each). Steps are in order — most depend on the one(s) before them.
 
 1. ✅ **Stack & setup.** Decide which speech-to-text (ASR), AI (LLM), and text-to-speech (TTS) services we'll use for Twi, get the API access/keys needed, and set up the shared project (repo, database, environments) so all 3 of us can run it locally. *(Done: Khaya ASR+TTS and Anthropic LLM keys confirmed working, repo scaffolded with a running backend.)*
-2. **Speech-to-text (ASR).** Get a Twi voice recording converted into text.
-3. **AI case builder (LLM).** Take that text (from voice or typed) and turn it into a clean case file (date, amount, fraud type, suspect number...), flagging anything missing and generating a follow-up question in Twi when needed.
-4. **Text-to-speech (TTS).** Turn the final confirmation summary into spoken Twi audio for the customer, with a pre-recorded fallback.
-5. **Case tracking.** Every report gets saved with a unique case number and a status the customer can check later.
+2. ✅ **Speech-to-text (ASR).** Get a Twi voice recording converted into text.
+3. ✅ **AI case builder (LLM).** Take that text (from voice or typed) and turn it into a clean case file (date, amount, fraud type, suspect number...), flagging anything missing and generating a follow-up question in Twi when needed.
+4. ✅ **Text-to-speech (TTS).** Turn the final confirmation summary into spoken Twi audio for the customer, with a pre-recorded fallback.
+5. ✅ **Case tracking.** Every report gets saved with a unique case number and a status the customer can check later.
 6. **WhatsApp bot.** Connect to WhatsApp and build the full conversation: choose voice/text/buttons → report → confirmation with case number → status check.
 7. **USSD flow.** Build the same reporting steps as a basic-phone USSD menu (simulated, no internet needed), feeding into the same case system.
-8. **Fraud alerts.** If a suspect number/pattern shows up in more than one report, automatically notify the other affected customers.
+8. ✅ **Fraud alerts.** If a suspect number/pattern shows up in more than one report, automatically notify the other affected customers.
 9. ✅ **MTN dashboard.** Build a simple webpage where MTN staff can see all cases, listen to the original audio, and update case status.
 10. ✅ **Accessibility pass** *(dashboard side — done; WhatsApp/USSD conversation flows still need this once built).* Make sure everything works well for blind, deaf, speech-impaired, and low-literacy users (clear labels, one step at a time, spoken summaries, no PIN ever asked).
 11. **Full testing.** Try the entire flow together end-to-end (WhatsApp + USSD + dashboard) and fix the bugs found.
@@ -105,6 +105,7 @@ The work is split into **12 steps**, grouped into 3 natural tracks so each teamm
 - **Sept 12** — Drafted `docs/DEMO_SCRIPT.md`: section-by-section demo plan, contingency plan if something fails live, and a placeholder for who presents what. Sections needing WhatsApp/USSD/dashboard-login are marked ⏳ until those are done.
 - **Sept 12** — Removed `dashboard/` from `main` so Ola can upload her updated code (with login) directly to GitHub without conflicting with what was already there. The previous version (bug fixes + security/accessibility hardening) is preserved on the `backup/dashboard-with-euriel-fixes` branch — once Ola's new upload is in, merge those fixes back in rather than redoing them.
 - **Sept 13** — Ola uploaded the updated dashboard: login screen, dark mode, case search, sortable columns, an empty-state message, and — on her own — most of the accessibility fixes we'd flagged (Esc-to-close, focus trap, `aria-label`/`aria-modal` on the modal, labels properly linked to their inputs, mobile-friendly table scroll). **Step 9 and most of Step 10 are now done.** Reapplied the one thing her version didn't have yet: the safe amount formatter + React Error Boundary, so a bad `amount` value still can't crash the page.
+- **Sept 14** — Adlai hadn't started Step 5, so we built it ourselves: real SQLite storage is now wired in (`db/connection.js` loads `schema.sql` on startup). Decided cases are created as soon as the first message comes in, even incomplete (nothing is lost if the customer stops responding) — later answers get merged in via `mergeCaseFields`. `POST /report` now actually saves/updates cases and triggers `alerts.js` once a case is complete; added `GET /cases/:caseId?phone=...` (phone-verified lookup) and `PATCH /cases/:caseId/status` for the dashboard. Also factored phone-number normalization into a shared `utils/phone.js`. 14/14 tests pass (`npm test`, now covering the DB layer too). **Step 5 is done** — only Step 6 (WhatsApp) and Step 7 (USSD) are left to reach Prototype 1.
 
 ---
 

@@ -2,20 +2,10 @@
 // suspected_number/transaction pattern matches another recent case,
 // and notify the other affected customer(s)
 
+import { normalizePhoneNumber } from "../utils/phone.js";
+
 const MATCH_WINDOW_DAYS = 30;
 const MTN_ESCALATION_THRESHOLD = 5;
-
-/**
- * Normalizes a Ghanaian phone number so equivalent formats compare equal
- * (e.g. "0244123456", "+233244123456", "233244123456" all become "244123456").
- */
-function normalizePhoneNumber(number) {
-  if (!number) return "";
-  let digits = String(number).replace(/\D/g, "");
-  if (digits.startsWith("233")) digits = digits.slice(3);
-  else if (digits.startsWith("0")) digits = digits.slice(1);
-  return digits;
-}
 
 /**
  * Finds existing cases that share the new case's suspected number and
