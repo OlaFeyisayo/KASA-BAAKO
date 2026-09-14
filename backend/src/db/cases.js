@@ -159,3 +159,20 @@ export function updateCaseStatus(caseId, status) {
 export function getAllCases() {
   return db.prepare("SELECT * FROM cases ORDER BY created_at DESC").all().map(fromRow);
 }
+
+/**
+ * Finds this customer's most recent incomplete case, if any — used by
+ * whatsapp.js/ussd.js to decide whether an incoming message is a new
+ * report or the answer to a pending follow-up question.
+ *
+ * @param {string} customerContact
+ * @returns {object|null}
+ */
+export function getOpenCaseForCustomer(customerContact) {
+  const normalized = normalizePhoneNumber(customerContact);
+  const rows = db
+    .prepare("SELECT * FROM cases WHERE missing_fields != '[]' ORDER BY created_at DESC")
+    .all()
+    .map(fromRow);
+  return rows.find((row) => normalizePhoneNumber(row.customer_contact) === normalized) ?? null;
+}
