@@ -5,7 +5,7 @@ import { processReport } from "./services/reportPipeline.js";
 import { getCaseForCustomer, updateCaseStatus, getAllCases } from "./db/cases.js";
 import { verifyWebhook, handleIncomingMessage } from "./channels/whatsapp.js";
 import { handleUssdRequest } from "./channels/ussd.js";
-import { login, logout, requireDashboardAuth, requireServiceApiKey } from "./services/auth.js";
+import { login, logout, requireDashboardAuth, requireServiceApiKey, requireUssdWebhookToken } from "./services/auth.js";
 
 const app = express();
 app.use(cors({ origin: process.env.DASHBOARD_ORIGIN || "*" }));
@@ -116,7 +116,9 @@ app.get("/webhooks/whatsapp", verifyWebhook);
 app.post("/webhooks/whatsapp", express.json(), handleIncomingMessage);
 
 // USSD webhook (Africa's Talking POSTs form-encoded fields per screen).
-app.post("/webhooks/ussd", express.urlencoded({ extended: false }), handleUssdRequest);
+// Register the callback URL with Africa's Talking as
+// https://.../webhooks/ussd?token=<USSD_WEBHOOK_TOKEN> — see requireUssdWebhookToken.
+app.post("/webhooks/ussd", requireUssdWebhookToken, express.urlencoded({ extended: false }), handleUssdRequest);
 
 // Catches malformed JSON and oversized bodies from express.json()/express.raw()
 // (thrown before any route handler runs) so callers get a clean JSON error

@@ -78,6 +78,24 @@ export function requireServiceApiKey(req, res, next) {
   next();
 }
 
+/**
+ * Express middleware: requires a matching "token" query parameter.
+ *
+ * Africa's Talking doesn't sign its USSD callbacks the way Meta signs
+ * WhatsApp webhooks (no header we can verify), so instead the secret lives
+ * in the callback URL itself — e.g. https://.../webhooks/ussd?token=XYZ —
+ * configured once in the Africa's Talking dashboard. Anyone who doesn't
+ * know that exact URL (including the token) gets rejected here.
+ */
+export function requireUssdWebhookToken(req, res, next) {
+  const expected = process.env.USSD_WEBHOOK_TOKEN;
+  const provided = req.query.token;
+  if (!expected || typeof provided !== "string" || !safeEqual(provided, expected)) {
+    return res.status(401).send("Unauthorized");
+  }
+  next();
+}
+
 /** Test-only: clears all sessions and lets a test force a specific expiry. */
 export function _resetSessionsForTests() {
   sessions.clear();

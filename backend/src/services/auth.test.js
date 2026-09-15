@@ -6,6 +6,7 @@ import {
   isValidSession,
   requireDashboardAuth,
   requireServiceApiKey,
+  requireUssdWebhookToken,
   _resetSessionsForTests,
   _createSessionForTests,
 } from "./auth.js";
@@ -14,6 +15,7 @@ beforeEach(() => {
   _resetSessionsForTests();
   process.env.DASHBOARD_PASSWORD = "test-password-123";
   process.env.SERVICE_API_KEY = "test-service-key-456";
+  process.env.USSD_WEBHOOK_TOKEN = "test-ussd-token-789";
 });
 
 test("login issues a token for the correct password", () => {
@@ -61,6 +63,10 @@ function fakeRes() {
     res.body = body;
     return res;
   };
+  res.send = (body) => {
+    res.body = body;
+    return res;
+  };
   return res;
 }
 
@@ -102,5 +108,27 @@ test("requireServiceApiKey allows the correct x-api-key through", () => {
   const res = fakeRes();
   let nextCalled = false;
   requireServiceApiKey(req, res, () => (nextCalled = true));
+  assert.equal(nextCalled, true);
+});
+
+test("requireUssdWebhookToken blocks a missing or wrong token query param", () => {
+  const res1 = fakeRes();
+  let next1 = false;
+  requireUssdWebhookToken({ query: {} }, res1, () => (next1 = true));
+  assert.equal(next1, false);
+  assert.equal(res1.statusCode, 401);
+
+  const res2 = fakeRes();
+  let next2 = false;
+  requireUssdWebhookToken({ query: { token: "wrong" } }, res2, () => (next2 = true));
+  assert.equal(next2, false);
+  assert.equal(res2.statusCode, 401);
+});
+
+test("requireUssdWebhookToken allows the correct token through", () => {
+  const req = { query: { token: "test-ussd-token-789" } };
+  const res = fakeRes();
+  let nextCalled = false;
+  requireUssdWebhookToken(req, res, () => (nextCalled = true));
   assert.equal(nextCalled, true);
 });
