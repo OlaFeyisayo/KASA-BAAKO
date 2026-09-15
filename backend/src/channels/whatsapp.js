@@ -5,7 +5,7 @@
 // see the Progress Log for why. "Guided" (quick-reply buttons) mode is not
 // built yet; voice and text are.)
 
-import { processReport } from "../services/reportPipeline.js";
+import { processReport, withCustomerLock } from "../services/reportPipeline.js";
 import { getCaseForCustomer, getOpenCaseForCustomer } from "../db/cases.js";
 import { REQUIRED_FIELDS } from "../services/llm.js";
 
@@ -148,17 +148,22 @@ export async function handleIncomingMessage(req, res) {
 }
 
 async function runReportTurn({ from, text, audioBuffer, contentType, input_mode }) {
-  const openCase = getOpenCaseForCustomer(from);
+  // Locked so that two near-simultaneous messages from the same customer
+  // can't both see "no open case yet" and each create a separate case —
+  // see withCustomerLock's comment in reportPipeline.js.
+  const result = await withCustomerLock(from, async () => {
+    const openCase = getOpenCaseForCustomer(from);
 
-  const result = await processReport({
-    text,
-    audioBuffer,
-    contentType,
-    customer_contact: from,
-    channel: "whatsapp",
-    input_mode,
-    case_id: openCase?.case_id,
-    language: "twi",
+    return processReport({
+      text,
+      audioBuffer,
+      contentType,
+      customer_contact: from,
+      channel: "whatsapp",
+      input_mode,
+      case_id: openCase?.case_id,
+      language: "twi",
+    });
   });
 
   if (result.missing_fields.length > 0) {

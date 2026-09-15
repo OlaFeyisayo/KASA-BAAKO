@@ -10,6 +10,7 @@ import {
 function makeCase(overrides = {}) {
   return {
     case_id: "KB-TEST",
+    customer_contact: "0200000000",
     suspected_number: "0244123456",
     created_at: "2026-09-01T10:00:00Z",
     ...overrides,
@@ -17,8 +18,8 @@ function makeCase(overrides = {}) {
 }
 
 test("findMatchingCases matches the same number in different formats", () => {
-  const newCase = makeCase({ case_id: "new", suspected_number: "+233244123456" });
-  const existing = [makeCase({ case_id: "old", suspected_number: "0244123456" })];
+  const newCase = makeCase({ case_id: "new", customer_contact: "0201111111", suspected_number: "+233244123456" });
+  const existing = [makeCase({ case_id: "old", customer_contact: "0202222222", suspected_number: "0244123456" })];
 
   const matches = findMatchingCases(newCase, existing);
   assert.equal(matches.length, 1);
@@ -26,25 +27,34 @@ test("findMatchingCases matches the same number in different formats", () => {
 });
 
 test("findMatchingCases ignores cases outside the 30-day window", () => {
-  const newCase = makeCase({ case_id: "new", created_at: "2026-09-30T10:00:00Z" });
-  const existing = [makeCase({ case_id: "old", created_at: "2026-01-01T10:00:00Z" })];
+  const newCase = makeCase({ case_id: "new", customer_contact: "0201111111", created_at: "2026-09-30T10:00:00Z" });
+  const existing = [makeCase({ case_id: "old", customer_contact: "0202222222", created_at: "2026-01-01T10:00:00Z" })];
 
   assert.equal(findMatchingCases(newCase, existing).length, 0);
 });
 
 test("findMatchingCases ignores cases with malformed dates instead of crashing", () => {
-  const newCase = makeCase({ case_id: "new", created_at: "not-a-date" });
-  const existing = [makeCase({ case_id: "old", created_at: "2026-09-01T10:00:00Z" })];
+  const newCase = makeCase({ case_id: "new", customer_contact: "0201111111", created_at: "not-a-date" });
+  const existing = [makeCase({ case_id: "old", customer_contact: "0202222222", created_at: "2026-09-01T10:00:00Z" })];
 
   assert.doesNotThrow(() => findMatchingCases(newCase, existing));
   assert.equal(findMatchingCases(newCase, existing).length, 0);
 });
 
 test("findMatchingCases excludes the case itself and non-matching numbers", () => {
-  const newCase = makeCase({ case_id: "new" });
+  const newCase = makeCase({ case_id: "new", customer_contact: "0201111111" });
   const existing = [
-    makeCase({ case_id: "new" }), // same id as newCase, should be excluded
-    makeCase({ case_id: "other", suspected_number: "0500000000" }),
+    makeCase({ case_id: "new", customer_contact: "0201111111" }), // same id as newCase, should be excluded
+    makeCase({ case_id: "other", customer_contact: "0203333333", suspected_number: "0500000000" }),
+  ];
+
+  assert.equal(findMatchingCases(newCase, existing).length, 0);
+});
+
+test("findMatchingCases excludes the same customer reporting the same number again", () => {
+  const newCase = makeCase({ case_id: "new", customer_contact: "0201111111" });
+  const existing = [
+    makeCase({ case_id: "old", customer_contact: "+233201111111" }), // same person, different phone format
   ];
 
   assert.equal(findMatchingCases(newCase, existing).length, 0);

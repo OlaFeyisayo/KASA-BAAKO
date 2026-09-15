@@ -29,19 +29,15 @@
 
 import { processReport } from "../services/reportPipeline.js";
 import { sendWhatsAppText } from "./whatsapp.js";
+import { FRAUD_CATEGORIES } from "../services/llm.js";
 
 const MAX_DESCRIPTION_LENGTH = 180; // keep USSD screens short
 
-// Index i here maps to the same fraud_category value used by the dashboard/LLM.
-const CATEGORY_VALUES = [
-  "Impersonation",
-  "Phishing",
-  "SIM Swap Fraud",
-  "OTP Scam",
-  "Unauthorized Transaction",
-  "Mobile Money Fraud",
-  "Other",
-];
+// Reuses llm.js's FRAUD_CATEGORIES as the single source of truth (same
+// values as the dashboard filter and the LLM's own category extraction),
+// so a case's fraud_category always matches regardless of which channel
+// it came in through. CATEGORY_LABELS below must stay in this same order.
+const CATEGORY_VALUES = FRAUD_CATEGORIES;
 
 const CATEGORY_LABELS = {
   en: [

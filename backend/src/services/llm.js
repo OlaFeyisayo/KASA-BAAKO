@@ -10,6 +10,20 @@ const REQUIRED_FIELDS = [
   "fraud_category",
 ];
 
+// Single source of truth for fraud_category, shared with channels/ussd.js
+// and matching the dashboard's filter dropdown exactly. Without this, a
+// WhatsApp/text report could get a free-form category the dashboard filter
+// (and USSD's own fixed menu) would never match.
+const FRAUD_CATEGORIES = [
+  "Impersonation",
+  "Phishing",
+  "SIM Swap Fraud",
+  "OTP Scam",
+  "Unauthorized Transaction",
+  "Mobile Money Fraud",
+  "Other",
+];
+
 const MAX_TEXT_FIELD_LENGTH = 1000;
 const REQUEST_TIMEOUT_MS = 15000;
 
@@ -21,7 +35,7 @@ Extract these fields when present:
 - incident_summary: a short description of what happened
 - incident_date: when it happened (as stated by the customer)
 - amount: the amount of money involved (a plain number only, no currency symbol or words)
-- fraud_category: type of fraud (e.g. "impersonation", "fake prize", "wrong transfer", "SIM swap", etc.)
+- fraud_category: MUST be exactly one of these strings (pick the closest match, or "Other" if none fit): ${FRAUD_CATEGORIES.map((c) => `"${c}"`).join(", ")}
 - suspected_number: the suspected scammer's phone number, if mentioned (optional)
 - transaction_id: transaction reference number, if mentioned (optional)
 
@@ -79,6 +93,19 @@ function coerceText(value) {
 }
 
 /**
+ * Snaps the LLM's fraud_category to one of FRAUD_CATEGORIES (case-insensitive
+ * match), falling back to "Other" if it didn't follow the instruction —
+ * this is what actually guarantees the dashboard filter and USSD's fixed
+ * menu always match, regardless of what the model returns.
+ */
+function coerceFraudCategory(value) {
+  const text = coerceText(value);
+  if (!text) return null;
+  const match = FRAUD_CATEGORIES.find((c) => c.toLowerCase() === text.toLowerCase());
+  return match ?? "Other";
+}
+
+/**
  * Rebuilds the case object from the LLM's raw output using strict per-field
  * coercion, and recomputes missing_fields/follow_up_questions ourselves
  * instead of trusting the LLM's own claims about them.
@@ -90,7 +117,7 @@ function normalizeResult(parsed) {
     incident_summary: coerceText(rawCase.incident_summary),
     incident_date: coerceText(rawCase.incident_date),
     amount: coerceAmount(rawCase.amount),
-    fraud_category: coerceText(rawCase.fraud_category),
+    fraud_category: coerceFraudCategory(rawCase.fraud_category),
     suspected_number: coerceText(rawCase.suspected_number),
     transaction_id: coerceText(rawCase.transaction_id),
   };
@@ -162,4 +189,4 @@ export async function buildCase(text) {
   return normalizeResult(parsed);
 }
 
-export { REQUIRED_FIELDS };
+export { REQUIRED_FIELDS, FRAUD_CATEGORIES };

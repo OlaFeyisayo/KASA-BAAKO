@@ -22,9 +22,13 @@ export function findMatchingCases(newCase, existingCases) {
   const newCaseTime = new Date(newCase.created_at).getTime();
 
   const newNumber = normalizePhoneNumber(newCase.suspected_number);
+  const newCustomer = normalizePhoneNumber(newCase.customer_contact);
 
   return existingCases.filter((c) => {
     if (c.case_id === newCase.case_id) return false;
+    // Never "alert" a customer about a number they reported themselves —
+    // that isn't someone else being affected, it's their own earlier case.
+    if (normalizePhoneNumber(c.customer_contact) === newCustomer) return false;
     if (normalizePhoneNumber(c.suspected_number) !== newNumber) return false;
 
     const caseTime = new Date(c.created_at).getTime();

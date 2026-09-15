@@ -9,6 +9,7 @@ import { buildCase } from "./llm.js";
 import { synthesizeSpeech } from "./tts.js";
 import { createCase, mergeCaseFields, updateCaseFields, getCaseForCustomer, getAllCases } from "../db/cases.js";
 import { findMatchingCases, buildAlertMessage, shouldEscalateToMTN, buildMTNEscalationNotice } from "./alerts.js";
+import { normalizePhoneNumber } from "../utils/phone.js";
 
 const EMPTY_CASE_FIELDS = {
   incident_summary: null,
@@ -18,6 +19,41 @@ const EMPTY_CASE_FIELDS = {
   suspected_number: null,
   transaction_id: null,
 };
+
+// Per-customer lock: WhatsApp decides whether an incoming message continues
+// an open case by looking one up (getOpenCaseForCustomer) *before* calling
+// processReport(). If the same customer's messages arrive close together,
+// both lookups can run before either message finishes being saved, so both
+// see "no open case" and each creates its own — two cases for one
+// conversation. Wrapping that lookup-then-process sequence in this lock
+// makes the second message wait for the first to finish (and its case to
+// exist) before it checks.
+const locks = new Map();
+
+/**
+ * Runs `fn` exclusively per customer: calls for the same (normalized) phone
+ * number queue up and run one at a time, in arrival order; different
+ * customers never block each other.
+ *
+ * @param {string} customerContact
+ * @param {() => Promise<any>} fn
+ */
+export async function withCustomerLock(customerContact, fn) {
+  const key = normalizePhoneNumber(customerContact);
+  const prev = locks.get(key) || Promise.resolve();
+  let release;
+  const current = new Promise((resolve) => {
+    release = resolve;
+  });
+  locks.set(key, prev.then(() => current));
+  await prev;
+  try {
+    return await fn();
+  } finally {
+    release();
+    if (locks.get(key) === current) locks.delete(key);
+  }
+}
 
 /**
  * @param {object} params
