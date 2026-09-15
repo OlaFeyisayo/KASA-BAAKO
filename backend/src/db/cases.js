@@ -21,6 +21,7 @@ function toRow(caseObj) {
   return {
     ...caseObj,
     missing_fields: JSON.stringify(caseObj.missing_fields ?? []),
+    suspected_number_normalized: caseObj.suspected_number ? normalizePhoneNumber(caseObj.suspected_number) : null,
   };
 }
 
@@ -45,35 +46,56 @@ function fromRow(row) {
  * @param {string} [params.audio_ref]
  * @returns {object} The full stored case, including its case_id.
  */
-export function createCase({ customer_contact, channel, input_mode, language = "twi", caseFields, missing_fields, audio_ref = null }) {
-  const case_id = generateCaseId();
+const INSERT_CASE_SQL = `INSERT INTO cases (
+  case_id, customer_contact, channel, input_mode, language,
+  incident_summary, incident_date, amount, fraud_category,
+  suspected_number, suspected_number_normalized, transaction_id, missing_fields, status, audio_ref
+) VALUES (
+  @case_id, @customer_contact, @channel, @input_mode, @language,
+  @incident_summary, @incident_date, @amount, @fraud_category,
+  @suspected_number, @suspected_number_normalized, @transaction_id, @missing_fields, @status, @audio_ref
+)`;
+
+const MAX_CASE_ID_ATTEMPTS = 5;
+
+export function createCase({
+  customer_contact,
+  channel,
+  input_mode,
+  language = "twi",
+  caseFields,
+  missing_fields,
+  audio_ref = null,
+  generateId = generateCaseId, // overridable in tests to force/prove collision retries
+}) {
   const status = "received";
 
-  db.prepare(
-    `INSERT INTO cases (
-      case_id, customer_contact, channel, input_mode, language,
-      incident_summary, incident_date, amount, fraud_category,
-      suspected_number, transaction_id, missing_fields, status, audio_ref
-    ) VALUES (
-      @case_id, @customer_contact, @channel, @input_mode, @language,
-      @incident_summary, @incident_date, @amount, @fraud_category,
-      @suspected_number, @transaction_id, @missing_fields, @status, @audio_ref
-    )`
-  ).run(
-    toRow({
-      case_id,
-      customer_contact,
-      channel,
-      input_mode,
-      language,
-      audio_ref,
-      status,
-      ...caseFields,
-      missing_fields,
-    })
-  );
-
-  return fromRow(db.prepare("SELECT * FROM cases WHERE case_id = ?").get(case_id));
+  // generateCaseId() is random, not sequential — an ID collision is
+  // possible (however unlikely) at high volume, and should never lose the
+  // customer's report. Retry with a fresh ID instead of letting the
+  // database's unique-constraint error bubble up as a failed submission.
+  for (let attempt = 1; attempt <= MAX_CASE_ID_ATTEMPTS; attempt++) {
+    const case_id = generateId();
+    try {
+      db.prepare(INSERT_CASE_SQL).run(
+        toRow({
+          case_id,
+          customer_contact,
+          channel,
+          input_mode,
+          language,
+          audio_ref,
+          status,
+          ...caseFields,
+          missing_fields,
+        })
+      );
+      return fromRow(db.prepare("SELECT * FROM cases WHERE case_id = ?").get(case_id));
+    } catch (err) {
+      const isCollision = err.code === "SQLITE_CONSTRAINT_PRIMARYKEY" || err.code === "SQLITE_CONSTRAINT_UNIQUE";
+      if (!isCollision || attempt === MAX_CASE_ID_ATTEMPTS) throw err;
+    }
+  }
 }
 
 /**
@@ -109,6 +131,7 @@ export function updateCaseFields(caseId, fields, missingFields) {
       amount = @amount,
       fraud_category = @fraud_category,
       suspected_number = @suspected_number,
+      suspected_number_normalized = @suspected_number_normalized,
       transaction_id = @transaction_id,
       missing_fields = @missing_fields,
       updated_at = datetime('now')
@@ -158,6 +181,28 @@ export function updateCaseStatus(caseId, status) {
  */
 export function getAllCases() {
   return db.prepare("SELECT * FROM cases ORDER BY created_at DESC").all().map(fromRow);
+}
+
+/**
+ * Finds other cases that share a suspected number, using the indexed
+ * suspected_number_normalized column instead of loading the whole table —
+ * used by alerts.js's fraud matching, which used to call getAllCases() on
+ * every single completed report. That scaled linearly with the total
+ * number of cases ever created (measured ~565ms / ~19MB at 50,000 rows,
+ * blocking the whole server for that duration since better-sqlite3 is
+ * synchronous); this scales with the number of matches instead, which stays
+ * small regardless of how many total cases exist.
+ *
+ * @param {string} normalizedNumber - Already-normalized (see utils/phone.js).
+ * @param {string} excludeCaseId - The case that triggered the check, so it's not matched against itself.
+ * @returns {object[]}
+ */
+export function getCasesBySuspectedNumber(normalizedNumber, excludeCaseId) {
+  if (!normalizedNumber) return [];
+  return db
+    .prepare("SELECT * FROM cases WHERE suspected_number_normalized = ? AND case_id != ?")
+    .all(normalizedNumber, excludeCaseId)
+    .map(fromRow);
 }
 
 /**

@@ -7,7 +7,7 @@
 import { transcribeAudio } from "./asr.js";
 import { buildCase } from "./llm.js";
 import { synthesizeSpeech } from "./tts.js";
-import { createCase, mergeCaseFields, updateCaseFields, getCaseForCustomer, getAllCases } from "../db/cases.js";
+import { createCase, mergeCaseFields, updateCaseFields, getCaseForCustomer, getCasesBySuspectedNumber } from "../db/cases.js";
 import { findMatchingCases, buildAlertMessage, shouldEscalateToMTN, buildMTNEscalationNotice } from "./alerts.js";
 import { normalizePhoneNumber } from "../utils/phone.js";
 
@@ -28,31 +28,49 @@ const EMPTY_CASE_FIELDS = {
 // conversation. Wrapping that lookup-then-process sequence in this lock
 // makes the second message wait for the first to finish (and its case to
 // exist) before it checks.
+// Map of key -> { promise, generation }. `generation` (not the promise
+// object itself) is what cleanup compares against below — comparing
+// promise identity looked right but silently never matched (the map always
+// held a derived `.then()` wrapper, never the exact promise being awaited),
+// so under real load this map only grew and never shrank: one entry per
+// customer phone number that ever messaged, forever, for the process's
+// lifetime. A stress test (50,000 distinct customers) confirmed 50,000
+// leaked entries. A generation counter avoids that class of bug entirely.
 const locks = new Map();
+let nextGeneration = 0;
 
 /**
  * Runs `fn` exclusively per customer: calls for the same (normalized) phone
  * number queue up and run one at a time, in arrival order; different
- * customers never block each other.
+ * customers never block each other. Cleans up its map entry once no other
+ * call for that customer is queued behind it, however `fn` resolves.
  *
  * @param {string} customerContact
  * @param {() => Promise<any>} fn
  */
 export async function withCustomerLock(customerContact, fn) {
   const key = normalizePhoneNumber(customerContact);
-  const prev = locks.get(key) || Promise.resolve();
-  let release;
-  const current = new Promise((resolve) => {
-    release = resolve;
-  });
-  locks.set(key, prev.then(() => current));
-  await prev;
+  const entry = locks.get(key);
+  const prev = entry ? entry.promise : Promise.resolve();
+  const generation = ++nextGeneration;
+
+  // Wait for prev to settle either way (its outcome belongs to a different
+  // caller) before running fn, so one customer's error can't jam the queue
+  // for their next message.
+  const current = prev.catch(() => {}).then(fn);
+  locks.set(key, { promise: current.catch(() => {}), generation });
+
   try {
-    return await fn();
+    return await current;
   } finally {
-    release();
-    if (locks.get(key) === current) locks.delete(key);
+    const latest = locks.get(key);
+    if (latest && latest.generation === generation) locks.delete(key);
   }
+}
+
+/** Test-only: exposes the lock map's size so tests can check for leaks. */
+export function _lockMapSizeForTests() {
+  return locks.size;
 }
 
 /**
@@ -129,8 +147,8 @@ export async function processReport({ text, audioBuffer, contentType, customer_c
       confirmationAudio = await synthesizeSpeech(finalCase.incident_summary);
     }
 
-    const otherCases = getAllCases().filter((c) => c.case_id !== finalCase.case_id);
-    const matches = findMatchingCases(finalCase, otherCases);
+    const candidates = getCasesBySuspectedNumber(normalizePhoneNumber(finalCase.suspected_number), finalCase.case_id);
+    const matches = findMatchingCases(finalCase, candidates);
     if (matches.length > 0) {
       alertInfo = shouldEscalateToMTN(matches)
         ? { type: "mtn_escalation", notice: buildMTNEscalationNotice(finalCase, matches) }

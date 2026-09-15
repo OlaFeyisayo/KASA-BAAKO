@@ -15,7 +15,8 @@ try {
   // ignore
 }
 
-const { createCase, mergeCaseFields, updateCaseFields, getCaseForCustomer, updateCaseStatus, getAllCases } = await import("./cases.js");
+const { createCase, mergeCaseFields, updateCaseFields, getCaseForCustomer, updateCaseStatus, getAllCases, getCasesBySuspectedNumber } = await import("./cases.js");
+const { normalizePhoneNumber } = await import("../utils/phone.js");
 
 const EMPTY = {
   incident_summary: null,
@@ -36,7 +37,7 @@ test("createCase stores an incomplete case and generates a non-sequential case_i
     missing_fields: merged.missing_fields,
   });
 
-  assert.match(created.case_id, /^KB-[0-9A-F]{8}$/);
+  assert.match(created.case_id, /^KB-[0-9A-F]{12}$/);
   assert.equal(created.status, "received");
   assert.deepEqual(created.missing_fields, ["incident_date", "amount", "fraud_category"]);
 });
@@ -97,6 +98,56 @@ test("updateCaseStatus only accepts valid statuses", () => {
   const updated = updateCaseStatus(created.case_id, "under_review");
   assert.equal(updated.status, "under_review");
   assert.throws(() => updateCaseStatus(created.case_id, "not_a_real_status"));
+});
+
+test("createCase retries with a new ID when generateId collides with an existing case", () => {
+  const merged = mergeCaseFields(EMPTY, { ...EMPTY, incident_summary: "first" });
+  const first = createCase({
+    customer_contact: "0209998877",
+    channel: "whatsapp",
+    input_mode: "text",
+    caseFields: merged.fields,
+    missing_fields: merged.missing_fields,
+  });
+
+  // Forces the exact collision scenario found under load testing: the first
+  // generated ID already exists, so createCase must retry instead of
+  // failing the customer's report.
+  let calls = 0;
+  const collidingThenUnique = () => (calls++ === 0 ? first.case_id : "KB-UNIQUE00000");
+
+  const second = createCase({
+    customer_contact: "0209998877",
+    channel: "whatsapp",
+    input_mode: "text",
+    caseFields: merged.fields,
+    missing_fields: merged.missing_fields,
+    generateId: collidingThenUnique,
+  });
+
+  assert.equal(calls, 2); // proves the retry path actually ran, not just the happy path
+  assert.equal(second.case_id, "KB-UNIQUE00000");
+  assert.notEqual(second.case_id, first.case_id);
+});
+
+test("getCasesBySuspectedNumber finds matches across phone number formats and excludes the given case", () => {
+  const merged1 = mergeCaseFields(EMPTY, { ...EMPTY, incident_summary: "test", suspected_number: "0244555666" });
+  const created = createCase({
+    customer_contact: "0201110000",
+    channel: "whatsapp",
+    input_mode: "text",
+    caseFields: merged1.fields,
+    missing_fields: merged1.missing_fields,
+  });
+
+  const matches = getCasesBySuspectedNumber(normalizePhoneNumber("+233244555666"), "KB-DOESNOTEXIST");
+  assert.ok(matches.some((c) => c.case_id === created.case_id));
+
+  // Excluding the case itself returns nothing else for a number only it used.
+  assert.deepEqual(getCasesBySuspectedNumber(normalizePhoneNumber("0244555666"), created.case_id), []);
+
+  // No suspected number -> no candidates, never a full-table scan disguised as one.
+  assert.deepEqual(getCasesBySuspectedNumber("", "KB-DOESNOTEXIST"), []);
 });
 
 test("getAllCases returns every stored case", () => {

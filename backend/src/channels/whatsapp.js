@@ -10,7 +10,7 @@ import { getCaseForCustomer, getOpenCaseForCustomer } from "../db/cases.js";
 import { REQUIRED_FIELDS } from "../services/llm.js";
 
 const GRAPH_API_VERSION = "v21.0";
-const CASE_ID_PATTERN = /^KB-[0-9A-F]{8}$/i;
+const CASE_ID_PATTERN = /^KB-[0-9A-F]{12}$/i;
 
 function graphUrl(path) {
   return `https://graph.facebook.com/${GRAPH_API_VERSION}/${path}`;
