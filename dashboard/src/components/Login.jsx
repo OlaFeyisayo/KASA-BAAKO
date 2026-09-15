@@ -1,16 +1,26 @@
 import { useState } from 'react'
+import { login } from '../api'
 
 function Login({ onLogin }) {
   const [password, setPassword] = useState('')
   const [error, setError] = useState('')
+  const [loading, setLoading] = useState(false)
 
-  function handleSubmit(e) {
+  async function handleSubmit(e) {
     e.preventDefault()
-    if (password === 'mtn2026') {
-      setError('')
-      onLogin()
-    } else {
-      setError('Incorrect password. Please try again.')
+    setError('')
+    setLoading(true)
+    try {
+      const token = await login(password)
+      if (!token) {
+        setError('Incorrect password. Please try again.')
+        return
+      }
+      onLogin(token)
+    } catch {
+      setError('Could not reach the server. Please check your connection and try again.')
+    } finally {
+      setLoading(false)
     }
   }
 
@@ -40,9 +50,10 @@ function Login({ onLogin }) {
 
         <button
           type="submit"
-          className="w-full bg-yellow-500 text-slate-900 font-medium rounded-md px-4 py-2 mt-2 hover:bg-yellow-400"
+          disabled={loading}
+          className="w-full bg-yellow-500 text-slate-900 font-medium rounded-md px-4 py-2 mt-2 hover:bg-yellow-400 disabled:opacity-60"
         >
-          Log In
+          {loading ? 'Logging in…' : 'Log In'}
         </button>
       </form>
     </div>

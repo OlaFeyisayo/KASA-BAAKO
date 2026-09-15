@@ -2,9 +2,10 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import { processReport } from "./services/reportPipeline.js";
-import { getCaseForCustomer, updateCaseStatus } from "./db/cases.js";
+import { getCaseForCustomer, updateCaseStatus, getAllCases } from "./db/cases.js";
 import { verifyWebhook, handleIncomingMessage } from "./channels/whatsapp.js";
 import { handleUssdRequest } from "./channels/ussd.js";
+import { login, logout, requireDashboardAuth, requireServiceApiKey } from "./services/auth.js";
 
 const app = express();
 app.use(cors({ origin: process.env.DASHBOARD_ORIGIN || "*" }));
@@ -24,6 +25,7 @@ app.get("/health", (req, res) => {
 // (e.g. answering a follow-up question).
 app.post(
   "/report",
+  requireServiceApiKey,
   express.raw({ type: "audio/*", limit: "20mb" }),
   async (req, res) => {
     try {
@@ -58,6 +60,31 @@ app.post(
   }
 );
 
+// Dashboard login — a single shared MTN-staff password, checked here
+// (not in the shipped frontend JS, unlike the old client-side check) and
+// exchanged for a session token used as a Bearer token on every
+// dashboard-only route below.
+app.post("/auth/login", (req, res) => {
+  const token = login(req.body?.password);
+  if (!token) {
+    return res.status(401).json({ error: "Invalid password" });
+  }
+  res.json({ token });
+});
+
+app.post("/auth/logout", requireDashboardAuth, (req, res) => {
+  const token = req.headers.authorization.slice(7);
+  logout(token);
+  res.json({ ok: true });
+});
+
+// For the MTN dashboard: every stored case. Dashboard-only — this is the
+// most sensitive endpoint in the system (every customer's fraud report in
+// one response), so it requires a valid dashboard session.
+app.get("/cases", requireDashboardAuth, (req, res) => {
+  res.json(getAllCases());
+});
+
 // Secure case status lookup — requires the requester's phone to match the
 // case's customer_contact, so a case number alone isn't enough to read it.
 app.get("/cases/:caseId", (req, res) => {
@@ -75,7 +102,7 @@ app.get("/cases/:caseId", (req, res) => {
 });
 
 // For the MTN dashboard: change a case's status.
-app.patch("/cases/:caseId/status", (req, res) => {
+app.patch("/cases/:caseId/status", requireDashboardAuth, (req, res) => {
   try {
     const updated = updateCaseStatus(req.params.caseId, req.body?.status);
     res.json(updated);

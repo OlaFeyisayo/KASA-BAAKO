@@ -1,15 +1,36 @@
-import { useState, useEffect } from 'react'
-import { sampleCases } from './data/sampleCases'
+import { useState, useEffect, useCallback } from 'react'
+import { fetchCases, updateCaseStatus, logout as apiLogout } from './api'
 import Login from './components/Login'
 import SummaryCard from './components/SummaryCard'
 import Filters from './components/Filters'
 import CasesTable from './components/CasesTable'
 import CaseDetailsModal from './components/CaseDetailsModal'
 
+const TOKEN_STORAGE_KEY = 'kasabaako_dashboard_token'
+
+function readStoredToken() {
+  try {
+    return sessionStorage.getItem(TOKEN_STORAGE_KEY)
+  } catch {
+    return null // private browsing / storage blocked — just start logged out
+  }
+}
+
+function storeToken(token) {
+  try {
+    if (token) sessionStorage.setItem(TOKEN_STORAGE_KEY, token)
+    else sessionStorage.removeItem(TOKEN_STORAGE_KEY)
+  } catch {
+    // Not persisted across a refresh, but the session still works for this tab load.
+  }
+}
+
 function App() {
-  const [isAuthenticated, setIsAuthenticated] = useState(false)
+  const [token, setToken] = useState(readStoredToken)
   const [darkMode, setDarkMode] = useState(false)
-  const [cases, setCases] = useState(sampleCases)
+  const [cases, setCases] = useState([])
+  const [loading, setLoading] = useState(false)
+  const [loadError, setLoadError] = useState('')
   const [selectedCase, setSelectedCase] = useState(null)
   const [statusFilter, setStatusFilter] = useState('all')
   const [categoryFilter, setCategoryFilter] = useState('all')
@@ -20,8 +41,47 @@ function App() {
     document.documentElement.classList.toggle('dark', darkMode)
   }, [darkMode])
 
-  if (!isAuthenticated) {
-    return <Login onLogin={() => setIsAuthenticated(true)} />
+  const handleSessionExpired = useCallback(() => {
+    storeToken(null)
+    setToken(null)
+    setCases([])
+  }, [])
+
+  const loadCases = useCallback(async (activeToken) => {
+    setLoading(true)
+    setLoadError('')
+    try {
+      const data = await fetchCases(activeToken)
+      setCases(data)
+    } catch (err) {
+      if (err.code === 'UNAUTHORIZED') {
+        handleSessionExpired()
+      } else {
+        setLoadError('Could not load cases from the server. Please try again.')
+      }
+    } finally {
+      setLoading(false)
+    }
+  }, [handleSessionExpired])
+
+  useEffect(() => {
+    if (token) loadCases(token)
+  }, [token, loadCases])
+
+  if (!token) {
+    return (
+      <Login
+        onLogin={(newToken) => {
+          storeToken(newToken)
+          setToken(newToken)
+        }}
+      />
+    )
+  }
+
+  async function handleLogout() {
+    await apiLogout(token)
+    handleSessionExpired()
   }
 
   const totalCases = cases.length
@@ -29,12 +89,21 @@ function App() {
   const underReviewCount = cases.filter(c => c.status === 'under_review').length
   const resolvedCount = cases.filter(c => c.status === 'resolved').length
 
-  function handleStatusChange(caseId, newStatus) {
+  async function handleStatusChange(caseId, newStatus) {
+    const previousCases = cases
     setCases(prevCases =>
-      prevCases.map(c =>
-        c.case_id === caseId ? { ...c, status: newStatus } : c
-      )
+      prevCases.map(c => (c.case_id === caseId ? { ...c, status: newStatus } : c))
     )
+    try {
+      await updateCaseStatus(token, caseId, newStatus)
+    } catch (err) {
+      setCases(previousCases) // roll back the optimistic update
+      if (err.code === 'UNAUTHORIZED') {
+        handleSessionExpired()
+      } else {
+        setLoadError('Could not update the case status. Please try again.')
+      }
+    }
   }
 
   function handleSort(key) {
@@ -79,16 +148,30 @@ function App() {
               View, filter, and manage reported fraud cases
             </p>
           </div>
-          <button
-            onClick={() => setDarkMode(d => !d)}
-            className="text-sm border border-slate-300 dark:border-slate-600 rounded-md px-3 py-1.5 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
-          >
-            {darkMode ? '☀️ Light Mode' : '🌙 Dark Mode'}
-          </button>
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setDarkMode(d => !d)}
+              className="text-sm border border-slate-300 dark:border-slate-600 rounded-md px-3 py-1.5 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
+            >
+              {darkMode ? '☀️ Light Mode' : '🌙 Dark Mode'}
+            </button>
+            <button
+              onClick={handleLogout}
+              className="text-sm border border-slate-300 dark:border-slate-600 rounded-md px-3 py-1.5 text-slate-600 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-700"
+            >
+              Log Out
+            </button>
+          </div>
         </div>
       </header>
 
       <main className="max-w-7xl mx-auto px-6 py-8">
+        {loadError && (
+          <div role="alert" className="mb-4 rounded-md border border-red-300 bg-red-50 dark:bg-red-950 dark:border-red-800 text-red-700 dark:text-red-300 text-sm px-4 py-3">
+            {loadError}
+          </div>
+        )}
+
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
           <SummaryCard label="Total Cases" count={totalCases} accentColor="text-slate-800 dark:text-slate-100" />
           <SummaryCard label="Received" count={receivedCount} accentColor="text-yellow-600" />
@@ -105,12 +188,16 @@ function App() {
           setSearchQuery={setSearchQuery}
         />
 
-        <CasesTable
-          cases={sortedCases}
-          onViewDetails={setSelectedCase}
-          sortConfig={sortConfig}
-          onSort={handleSort}
-        />
+        {loading ? (
+          <p className="mt-8 text-slate-500 dark:text-slate-400 text-sm">Loading cases…</p>
+        ) : (
+          <CasesTable
+            cases={sortedCases}
+            onViewDetails={setSelectedCase}
+            sortConfig={sortConfig}
+            onSort={handleSort}
+          />
+        )}
       </main>
 
       <CaseDetailsModal
