@@ -91,6 +91,21 @@ app.post("/webhooks/whatsapp", express.json(), handleIncomingMessage);
 // USSD webhook (Africa's Talking POSTs form-encoded fields per screen).
 app.post("/webhooks/ussd", express.urlencoded({ extended: false }), handleUssdRequest);
 
+// Catches malformed JSON and oversized bodies from express.json()/express.raw()
+// (thrown before any route handler runs) so callers get a clean JSON error
+// instead of Express's default HTML page, which included internal file
+// paths and dependency stack traces.
+app.use((err, req, res, next) => {
+  if (err.type === "entity.parse.failed") {
+    return res.status(400).json({ error: "Malformed request body" });
+  }
+  if (err.type === "entity.too.large") {
+    return res.status(413).json({ error: "Request body too large" });
+  }
+  console.error("[unhandled]", err);
+  res.status(500).json({ error: "Something went wrong" });
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
   console.log(`KasaBaako backend running on port ${PORT}`);

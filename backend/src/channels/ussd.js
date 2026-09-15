@@ -95,8 +95,13 @@ const TEXT = {
   },
 };
 
-function parseAmount(input) {
-  const cleaned = String(input).replace(/[^0-9.]/g, "");
+export function parseAmount(input) {
+  const trimmed = String(input).trim();
+  // Stripping non-digit characters below (to tolerate "GHS 500" etc.) would
+  // also silently strip a leading "-", turning an invalid negative amount
+  // into a valid positive one instead of rejecting it — check first.
+  if (trimmed.startsWith("-")) return null;
+  const cleaned = trimmed.replace(/[^0-9.]/g, "");
   if (!cleaned) return null;
   const num = parseFloat(cleaned);
   return Number.isFinite(num) && num >= 0 ? num : null;
