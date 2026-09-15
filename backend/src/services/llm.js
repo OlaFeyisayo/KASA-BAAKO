@@ -1,12 +1,13 @@
 // Step 3: Anthropic — turn free text into a structured case (see db/schema.sql),
 // flag missing required fields, generate a Twi follow-up question for each one
 
+// suspected_number is deliberately NOT required — customers often don't
+// know the scammer's number, and the case must still be completable then.
 const REQUIRED_FIELDS = [
   "incident_summary",
   "incident_date",
   "amount",
   "fraud_category",
-  "suspected_number",
 ];
 
 const MAX_TEXT_FIELD_LENGTH = 1000;
@@ -21,7 +22,7 @@ Extract these fields when present:
 - incident_date: when it happened (as stated by the customer)
 - amount: the amount of money involved (a plain number only, no currency symbol or words)
 - fraud_category: type of fraud (e.g. "impersonation", "fake prize", "wrong transfer", "SIM swap", etc.)
-- suspected_number: the suspected scammer's phone number, if mentioned
+- suspected_number: the suspected scammer's phone number, if mentioned (optional)
 - transaction_id: transaction reference number, if mentioned (optional)
 
 Respond ONLY with a JSON object with this exact shape, no other text, no markdown code fences:
@@ -38,7 +39,7 @@ Respond ONLY with a JSON object with this exact shape, no other text, no markdow
   "follow_up_questions": { "field_name": "question in Twi", ... }
 }
 
-A field is "missing" only if it is null AND it is one of: incident_summary, incident_date, amount, fraud_category, suspected_number (transaction_id is optional and never counts as missing). Write a follow_up_question only for each missing required field, as one short, clear question in Twi.`;
+A field is "missing" only if it is null AND it is one of: incident_summary, incident_date, amount, fraud_category (suspected_number and transaction_id are optional and never count as missing). Write a follow_up_question only for each missing required field, as one short, clear question in Twi.`;
 
 function withTimeout(promise, ms) {
   const controller = new AbortController();

@@ -29,6 +29,8 @@ const EMPTY_CASE_FIELDS = {
  * @param {"voice"|"text"|"guided"} params.input_mode
  * @param {string} [params.case_id] - Pass to continue an existing (incomplete) case.
  * @param {string} [params.language="twi"]
+ * @param {boolean} [params.synthesizeConfirmation=true] - Set false for text-only
+ *   channels (USSD) so we don't waste a Khaya TTS call on audio nobody can play.
  * @returns {Promise<{
  *   case_id: string,
  *   case: object,
@@ -38,7 +40,7 @@ const EMPTY_CASE_FIELDS = {
  *   alert: object|null
  * }>}
  */
-export async function processReport({ text, audioBuffer, contentType, customer_contact, channel, input_mode, case_id, language }) {
+export async function processReport({ text, audioBuffer, contentType, customer_contact, channel, input_mode, case_id, language, synthesizeConfirmation = true }) {
   if (!customer_contact || !channel || !input_mode) {
     throw new Error("customer_contact, channel, and input_mode are required");
   }
@@ -87,7 +89,9 @@ export async function processReport({ text, audioBuffer, contentType, customer_c
   let alertInfo = null;
 
   if (merged.missing_fields.length === 0) {
-    confirmationAudio = await synthesizeSpeech(finalCase.incident_summary);
+    if (synthesizeConfirmation) {
+      confirmationAudio = await synthesizeSpeech(finalCase.incident_summary);
+    }
 
     const otherCases = getAllCases().filter((c) => c.case_id !== finalCase.case_id);
     const matches = findMatchingCases(finalCase, otherCases);

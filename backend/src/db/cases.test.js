@@ -38,7 +38,7 @@ test("createCase stores an incomplete case and generates a non-sequential case_i
 
   assert.match(created.case_id, /^KB-[0-9A-F]{8}$/);
   assert.equal(created.status, "received");
-  assert.deepEqual(created.missing_fields, ["incident_date", "amount", "fraud_category", "suspected_number"]);
+  assert.deepEqual(created.missing_fields, ["incident_date", "amount", "fraud_category"]);
 });
 
 test("mergeCaseFields fills in missing fields without overwriting known ones", () => {

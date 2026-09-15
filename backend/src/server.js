@@ -4,6 +4,7 @@ import cors from "cors";
 import { processReport } from "./services/reportPipeline.js";
 import { getCaseForCustomer, updateCaseStatus } from "./db/cases.js";
 import { verifyWebhook, handleIncomingMessage } from "./channels/whatsapp.js";
+import { handleUssdRequest } from "./channels/ussd.js";
 
 const app = express();
 app.use(cors({ origin: process.env.DASHBOARD_ORIGIN || "*" }));
@@ -86,6 +87,9 @@ app.patch("/cases/:caseId/status", (req, res) => {
 // WhatsApp webhook (Meta verifies this URL with a GET, then POSTs incoming messages).
 app.get("/webhooks/whatsapp", verifyWebhook);
 app.post("/webhooks/whatsapp", express.json(), handleIncomingMessage);
+
+// USSD webhook (Africa's Talking POSTs form-encoded fields per screen).
+app.post("/webhooks/ussd", express.urlencoded({ extended: false }), handleUssdRequest);
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
