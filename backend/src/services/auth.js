@@ -7,14 +7,14 @@
 // which the dashboard sends back as "Authorization: Bearer <token>" on
 // every request that reads or changes case data.
 //
-// Sessions are kept in memory only (a Map), which is fine for a single-
-// process hackathon deployment but means everyone is logged out if the
-// server restarts — acceptable for now, called out in the README.
+// Sessions live in the same SQLite database as everything else (a
+// "sessions" table), not an in-memory Map — a Map would forget every
+// logged-in session the moment the backend process restarts.
 
 import { randomBytes, timingSafeEqual } from "node:crypto";
+import { db } from "../db/connection.js";
 
 const SESSION_DURATION_MS = 12 * 60 * 60 * 1000; // 12 hours
-const sessions = new Map(); // token -> expiry timestamp (ms)
 
 /** Constant-time string comparison, so checking the password can't leak how many leading characters matched via response timing. */
 function safeEqual(a, b) {
@@ -37,22 +37,22 @@ export function login(password) {
     return null;
   }
   const token = randomBytes(32).toString("hex");
-  sessions.set(token, Date.now() + SESSION_DURATION_MS);
+  db.prepare("INSERT INTO sessions (token, expires_at) VALUES (?, ?)").run(token, Date.now() + SESSION_DURATION_MS);
   return token;
 }
 
 /** Ends a session (logout), if it exists. */
 export function logout(token) {
-  sessions.delete(token);
+  db.prepare("DELETE FROM sessions WHERE token = ?").run(token);
 }
 
 /** @returns {boolean} Whether `token` is a currently-valid, unexpired session. */
 export function isValidSession(token) {
   if (!token) return false;
-  const expiry = sessions.get(token);
-  if (!expiry) return false;
-  if (Date.now() > expiry) {
-    sessions.delete(token);
+  const row = db.prepare("SELECT expires_at FROM sessions WHERE token = ?").get(token);
+  if (!row) return false;
+  if (Date.now() > row.expires_at) {
+    db.prepare("DELETE FROM sessions WHERE token = ?").run(token);
     return false;
   }
   return true;
@@ -98,12 +98,12 @@ export function requireUssdWebhookToken(req, res, next) {
 
 /** Test-only: clears all sessions and lets a test force a specific expiry. */
 export function _resetSessionsForTests() {
-  sessions.clear();
+  db.prepare("DELETE FROM sessions").run();
 }
 
 /** Test-only: creates a session token with an arbitrary expiry, to test expiry handling without waiting 12 hours. */
 export function _createSessionForTests(expiresAt) {
   const token = randomBytes(32).toString("hex");
-  sessions.set(token, expiresAt);
+  db.prepare("INSERT INTO sessions (token, expires_at) VALUES (?, ?)").run(token, expiresAt);
   return token;
 }

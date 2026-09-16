@@ -130,6 +130,13 @@ The work is split into **12 steps**, grouped into 3 natural tracks so each teamm
   3. **2 moderate npm audit findings** (`qs`, a transitive dependency of Express, DoS via array-limit bypass) — Express 4.x's own dependency range can't reach the patched `qs` version through normal updates, so pinned it via package.json's `overrides` field instead of bumping to Express 5 (a breaking change not worth it for a moderate DoS fix). `npm audit` now reports 0 vulnerabilities.
   - Verified end-to-end in a real browser (not just curl): logged in with a wrong password (rejected), then the right one (session token issued), viewed real seeded cases, changed a case's status through the UI, reloaded the page and confirmed the new status came from the server (not local React state), logged out, and confirmed reloading after logout still requires logging in again (session actually cleared, not just hidden).
   - 33/33 tests pass (`npm test`, up from 23 — added `services/auth.test.js`).
+- **Sept 16** — Went through the remaining Known Issues one by one and closed out 3 more:
+  1. **USSD webhook had no way to verify requests really come from Africa's Talking** — they don't sign USSD callbacks the way Meta signs WhatsApp webhooks, so instead of a header check, the secret lives in the callback URL itself: registered `.../webhooks/ussd?token=<USSD_WEBHOOK_TOKEN>` with Africa's Talking, and `requireUssdWebhookToken` rejects anything without the matching token. Verified live: wrong/missing token → 401, correct token → normal flow.
+  2. **Verified real Khaya pricing** instead of relying on a half-remembered number — Basic is $14.95/mo for 3,000 calls (not unlimited; no tier is), which comfortably covers testing + the demo. Our professors are covering the cost.
+  3. **Dashboard sessions moved from an in-memory `Map` to a `sessions` table** in the same SQLite database — no new service needed, and it directly fixes the "everyone's logged out if the backend restarts" problem. Verified with a real `kill -9` + restart: a token issued before the crash still worked after.
+  - Also found and fixed a latent test-isolation bug while adding DB access to `auth.test.js`: multiple test files touching the same SQLite file could run concurrently (Node's test runner parallelizes by default) and race against `cases.test.js`'s startup file-wipe. Added `--test-concurrency=1` to the test script — negligible slowdown for this size of suite, removes the race entirely.
+  - Ownership split going forward: Mawuli is now driving the WhatsApp bot (including its own webhook signature verification, still open); everything else above is this project's own backend.
+  - 35/35 tests pass.
 
 ---
 
@@ -146,5 +153,5 @@ Found during the security pass but not fixed yet (either low priority for the pr
 - [x] **No automated tests** — `alerts.js` now has a test suite (`npm test`). Still worth adding tests for `llm.js`/`asr.js`/`tts.js` and the WhatsApp/USSD flows once they're done.
 - [x] **Sample audio in `dashboard/src/data/sampleCases.js` is hosted on Google's servers** — moot as of Sept 15: the dashboard now loads real cases from the backend, and `sampleCases.js` was deleted.
 - [x] **Dashboard has no real authentication / password visible in shipped JS** — fixed Sept 15, see Progress Log (server-side session tokens).
-- [ ] **Dashboard sessions are in-memory only** — everyone's logged out if the backend process restarts (fine for a hackathon single-process deployment; would need a real session store — Redis, DB-backed, etc. — for production).
+- [x] **Dashboard sessions were in-memory only** — fixed Sept 16: sessions now live in a `sessions` table in the same SQLite database as everything else (no new service needed), so staff stay logged in across a backend restart. Verified with a real `kill -9` + restart: a token issued before the crash still worked afterward.
 

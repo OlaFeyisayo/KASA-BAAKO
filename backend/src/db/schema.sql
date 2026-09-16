@@ -25,3 +25,10 @@ CREATE TABLE IF NOT EXISTS cases (
 CREATE INDEX IF NOT EXISTS idx_cases_suspected_number ON cases (suspected_number);
 CREATE INDEX IF NOT EXISTS idx_cases_suspected_number_normalized ON cases (suspected_number_normalized);
 CREATE INDEX IF NOT EXISTS idx_cases_status ON cases (status);
+
+-- Dashboard login sessions. Stored here (not an in-memory Map) so staff
+-- stay logged in across a backend restart — the whole point of this table.
+CREATE TABLE IF NOT EXISTS sessions (
+  token TEXT PRIMARY KEY,
+  expires_at INTEGER NOT NULL
+);
