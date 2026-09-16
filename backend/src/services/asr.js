@@ -2,7 +2,13 @@
 // API: https://translation-api.ghananlp.org/asr/v3
 
 const ASR_BASE_URL = "https://translation-api.ghananlp.org/asr/v3";
-const REQUEST_TIMEOUT_MS = 15000;
+// 15s (this codebase's usual API timeout) turned out too tight for real
+// transcription specifically — a quick reachability check to this same host
+// round-trips in well under a second, so the bottleneck is Khaya actually
+// processing the audio, which scales with clip length/current load, not
+// network latency. Found via a live "Khaya ASR request timed out" on an
+// ordinary voice note.
+const REQUEST_TIMEOUT_MS = 45000;
 
 /**
  * Transcribes an audio clip to text using the Khaya ASR v3 API.
