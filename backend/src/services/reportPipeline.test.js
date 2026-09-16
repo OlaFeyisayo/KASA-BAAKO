@@ -4,8 +4,13 @@ import { rmSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
+// A genuinely throwaway DB file for tests, separate from the real
+// kasabaako.db the app actually uses — this used to point at that same
+// production file (see db/connection.js's comment), silently swallowing
+// the delete failing on Windows when the file was locked, and leaving
+// stale rows from a previous run for these tests to stumble over.
 const __dirname = dirname(fileURLToPath(import.meta.url));
-const testDbPath = join(__dirname, "..", "..", "data", "kasabaako.db");
+const testDbPath = join(__dirname, "..", "..", "data", "kasabaako.reportPipeline-test.db");
 try {
   rmSync(testDbPath, { force: true });
   rmSync(testDbPath + "-wal", { force: true });
@@ -13,6 +18,7 @@ try {
 } catch {
   // ignore
 }
+process.env.DB_PATH = testDbPath;
 
 // Found while debugging a real "the bot doesn't process my report" complaint:
 // a Khaya TTS failure (quota, network, anything) used to throw out of

@@ -6,7 +6,12 @@ import { mkdirSync } from "node:fs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const DATA_DIR = join(__dirname, "..", "..", "data");
-const DB_PATH = join(DATA_DIR, "kasabaako.db");
+// Overridable so tests can point at their own isolated file instead of this
+// one — see db/cases.test.js and services/reportPipeline.test.js, which
+// used to delete-and-recreate this exact path before every run (their
+// comments called it "a throwaway DB file", but it was actually this same
+// one the real app uses).
+const DB_PATH = process.env.DB_PATH || join(DATA_DIR, "kasabaako.db");
 
 mkdirSync(DATA_DIR, { recursive: true });
 

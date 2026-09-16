@@ -177,13 +177,28 @@ export async function buildCase(text) {
     throw new Error(`Anthropic API error: ${message}`);
   }
 
-  const raw = data.content?.[0]?.text ?? "";
+  // Claude's response can carry more than one content block — pulling only
+  // content[0] would silently give us "" (and no error until the JSON.parse
+  // below) if a non-text block ever came first. Joining every text block
+  // together is safe either way.
+  const raw = (data.content || [])
+    .filter((block) => block.type === "text")
+    .map((block) => block.text)
+    .join("\n");
 
   let parsed;
   try {
     parsed = JSON.parse(extractJson(raw));
   } catch {
-    throw new Error("LLM did not return valid JSON");
+    // Log what Claude actually said — silently discarding it (the previous
+    // behavior) made "LLM did not return valid JSON" impossible to debug
+    // from the server logs alone, which is exactly what happened here.
+    console.error("[llm] LLM did not return valid JSON. Raw response:", raw.slice(0, 500));
+    // Degrade to "nothing extracted" rather than failing the whole report —
+    // reportPipeline.js's missing_fields flow already exists for exactly
+    // this, so this keeps the customer moving with a follow-up question
+    // instead of a hard "something went wrong" error.
+    return normalizeResult({ case: {} });
   }
 
   return normalizeResult(parsed);
