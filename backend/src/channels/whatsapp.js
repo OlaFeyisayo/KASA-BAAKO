@@ -1,9 +1,16 @@
-// Step 6: Twilio WhatsApp webhook — greeting, mode choice (voice/text/guided),
-// runs the report through asr.js + llm.js, sends back confirmation + case number
+// Step 6: WhatsApp bot via Meta's WhatsApp Cloud API — greeting, language
+// choice, and the actual report turn (voice or text), through the shared
+// reportPipeline (same one channels/ussd.js uses) so ASR/LLM/DB/TTS/alerts
+// only live in one place.
 //
-// (Ended up using Meta's own WhatsApp Cloud API directly instead of Twilio —
-// see the Progress Log for why. "Guided" (quick-reply buttons) mode is not
-// built yet; voice and text are.)
+// "Guided" (quick-reply buttons) mode is deliberately not built here —
+// unlike USSD, WhatsApp customers can already type or speak freely, so a
+// forced step-by-step flow would add friction rather than accessibility.
+//
+// Conversation UX (language choice, mode-agnostic message handling,
+// restart) added on top of the original voice/text implementation, closing
+// the "webhook isn't signature-verified yet" item from the README's Known
+// Issues along the way (see middleware/verifySignature.js + server.js).
 
 import { processReport, withCustomerLock } from "../services/reportPipeline.js";
 import { getCaseForCustomer, getOpenCaseForCustomer } from "../db/cases.js";
@@ -52,6 +59,27 @@ export async function sendWhatsAppText(to, body) {
   }
 }
 
+/** Sends up to 3 tappable buttons (WhatsApp's limit for this message type). */
+export async function sendWhatsAppButtons(to, bodyText, buttons) {
+  const response = await fetch(graphUrl(`${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`), {
+    method: "POST",
+    headers: { ...authHeaders(), "Content-Type": "application/json" },
+    body: JSON.stringify({
+      messaging_product: "whatsapp",
+      to,
+      type: "interactive",
+      interactive: {
+        type: "button",
+        body: { text: bodyText },
+        action: { buttons: buttons.map((b) => ({ type: "reply", reply: { id: b.id, title: b.title } })) },
+      },
+    }),
+  });
+  if (!response.ok) {
+    console.error("[whatsapp] sendWhatsAppButtons failed:", await response.text());
+  }
+}
+
 /** Uploads an audio buffer as WhatsApp media, then sends it to `to`. */
 export async function sendWhatsAppAudio(to, audioBuffer) {
   const form = new FormData();
@@ -94,13 +122,77 @@ async function downloadWhatsAppMedia(mediaId) {
 
   const fileResponse = await fetch(meta.url, { headers: authHeaders() });
   const arrayBuffer = await fileResponse.arrayBuffer();
-  return { buffer: Buffer.from(arrayBuffer), mimeType: meta.mime_type };
+  // WhatsApp reports voice notes as "audio/ogg; codecs=opus" — Khaya's own
+  // asr.js docs only mention bare types (mp3/wav/flac/ogg), and the ASR API
+  // has rejected the full string with "invalid parameters" in practice, so
+  // the codec parameter is stripped before it's ever handed to asr.js.
+  const mimeType = (meta.mime_type || "").split(";")[0].trim();
+  return { buffer: Buffer.from(arrayBuffer), mimeType };
 }
 
+// Per-customer conversation UX state: which language they picked. This is
+// NOT the report data itself (that's the case row in SQLite, via
+// db/cases.js) — it's short-lived chat state, so an in-memory Map is fine
+// and avoids a schema change to the shared database. It resets on a server
+// restart; getLanguage() below falls back to an in-progress case's own
+// stored language first, so a customer mid-conversation isn't re-asked.
+const languageByCustomer = new Map();
+
+function getLanguage(from, openCase) {
+  if (languageByCustomer.has(from)) return languageByCustomer.get(from);
+  if (openCase?.language === "twi") return "tw";
+  if (openCase?.language === "english") return "en";
+  return null;
+}
+
+const TEXT = {
+  en: {
+    languageAck: "Okay — we'll continue in English.\n\nSend a voice note or type your report, whenever you're ready.",
+    statusFound: (found) => `Case ${found.case_id}: status is "${found.status}".`,
+    statusNotFound: "We couldn't find that case number for your phone number.",
+    unsupportedMessage: "Sorry, I can only understand voice notes or text messages right now.",
+    genericError: "Something went wrong processing your report. Please try again.",
+    fallbackFollowUp: "Could you give me a bit more detail about what happened?",
+    confirmation: (id) => `Thank you. Your case number is ${id}. We've recorded your report.`,
+    restarted: "Okay, let's start over.",
+  },
+  tw: {
+    languageAck: "Ɛyɛ — yɛbɛkɔ so wɔ Twi mu.\n\nFa wo nne kyerɛ anaasɛ kyerɛw wo amanneɛbɔ, bere biara a wobɛpɛ.",
+    statusFound: (found) => `Case ${found.case_id}: gyinabea ne "${found.status}".`,
+    statusNotFound: "Yɛanhu case a saa number no wɔ wo telefon number no ho.",
+    unsupportedMessage: "Yɛpa wo kyɛw, mate wo nne anaa wo nkrasɛm nko ara.",
+    genericError: "Biribi ankɔ yie wɔ wo amanneɛbɔ no ho adwuma mu. Yɛsrɛ wo, sɔ hwɛ bio.",
+    fallbackFollowUp: "Wobɛtumi aka deɛ ɛsii no mu nsɛm bi akyerɛ me?",
+    confirmation: (id) => `Meda wo ase. Wo case number ne ${id}. Yɛasie wo amanneɛbɔ no.`,
+    restarted: "Ɛyɛ, momma yɛnhyɛ aseɛ bio.",
+  },
+};
+
+// The LLM's own follow_up_questions are always written in Twi (see
+// llm.js's SYSTEM_PROMPT) — buildCase() isn't language-aware. Rather than
+// touch the shared prompt (which ussd.js also depends on), an English
+// customer gets these instead; a Twi customer still gets the LLM's own
+// (better, context-aware) question.
+const FOLLOW_UP_QUESTIONS_EN = {
+  incident_summary: "Please briefly describe what happened.",
+  incident_date: "What date did this happen? (e.g. 10 September)",
+  amount: "What amount of money was involved? (e.g. 500)",
+  fraud_category: "What type of fraud was this? (e.g. impersonation, phishing, mobile money fraud)",
+};
+
 /** Picks the single most important missing field to ask about next (one question at a time). */
-function nextFollowUpQuestion(missingFields, followUpQuestions) {
+export function nextFollowUpQuestion(missingFields, followUpQuestions, lang) {
   const nextField = REQUIRED_FIELDS.find((field) => missingFields.includes(field));
-  return nextField ? followUpQuestions[nextField] : null;
+  if (!nextField) return null;
+  if (lang === "en") return FOLLOW_UP_QUESTIONS_EN[nextField] || followUpQuestions[nextField];
+  return followUpQuestions[nextField];
+}
+
+async function sendLanguageChoice(to) {
+  await sendWhatsAppButtons(to, "Welcome 👋 / Akwaaba 👋\n\nPlease choose your language:\nMesrɛ wo paw wo kasa:", [
+    { id: "lang_en", title: "English" },
+    { id: "lang_tw", title: "Twi" },
+  ]);
 }
 
 /**
@@ -114,40 +206,65 @@ export async function handleIncomingMessage(req, res) {
   if (!message) return; // not an incoming message (e.g. a status update)
 
   const from = message.from;
+  const buttonId = message.type === "interactive" ? message.interactive?.button_reply?.id : null;
 
   try {
+    // Language choice, and "restart" (typed or tapped), work at any point —
+    // they don't require or interrupt an in-progress report.
+    if (buttonId === "lang_en" || buttonId === "lang_tw") {
+      const lang = buttonId === "lang_tw" ? "tw" : "en";
+      languageByCustomer.set(from, lang);
+      await sendWhatsAppText(from, TEXT[lang].languageAck);
+      return;
+    }
+
+    const typedText = message.type === "text" ? message.text.body.trim() : "";
+    if (buttonId === "restart" || typedText.toLowerCase() === "restart") {
+      languageByCustomer.delete(from);
+      const lang = getLanguage(from, null) || "en";
+      await sendWhatsAppText(from, TEXT[lang].restarted);
+      await sendLanguageChoice(from);
+      return;
+    }
+
+    const openCase = getOpenCaseForCustomer(from);
+    let lang = getLanguage(from, openCase);
+    if (!lang) {
+      await sendLanguageChoice(from);
+      return;
+    }
+    const t = TEXT[lang];
+
     if (message.type === "text") {
-      const body = message.text.body.trim();
+      const body = typedText;
 
       if (CASE_ID_PATTERN.test(body)) {
         const found = getCaseForCustomer(body.toUpperCase(), from);
-        await sendWhatsAppText(
-          from,
-          found
-            ? `Case ${found.case_id}: status is "${found.status}".`
-            : "We couldn't find that case number for your phone number."
-        );
+        await sendWhatsAppText(from, found ? t.statusFound(found) : t.statusNotFound);
         return;
       }
 
-      await runReportTurn({ from, text: body, input_mode: "text" });
+      await runReportTurn({ from, text: body, input_mode: "text", lang });
       return;
     }
 
     if (message.type === "audio") {
       const { buffer, mimeType } = await downloadWhatsAppMedia(message.audio.id);
-      await runReportTurn({ from, audioBuffer: buffer, contentType: mimeType, input_mode: "voice" });
+      await runReportTurn({ from, audioBuffer: buffer, contentType: mimeType, input_mode: "voice", lang });
       return;
     }
 
-    await sendWhatsAppText(from, "Sorry, I can only understand voice notes or text messages right now.");
+    await sendWhatsAppText(from, t.unsupportedMessage);
   } catch (err) {
     console.error("[whatsapp] handleIncomingMessage error:", err);
-    await sendWhatsAppText(from, "Something went wrong processing your report. Please try again.");
+    const lang = getLanguage(from, null) || "en";
+    await sendWhatsAppText(from, TEXT[lang].genericError);
   }
 }
 
-async function runReportTurn({ from, text, audioBuffer, contentType, input_mode }) {
+async function runReportTurn({ from, text, audioBuffer, contentType, input_mode, lang }) {
+  const t = TEXT[lang];
+
   // Locked so that two near-simultaneous messages from the same customer
   // can't both see "no open case yet" and each create a separate case —
   // see withCustomerLock's comment in reportPipeline.js.
@@ -162,17 +279,17 @@ async function runReportTurn({ from, text, audioBuffer, contentType, input_mode 
       channel: "whatsapp",
       input_mode,
       case_id: openCase?.case_id,
-      language: "twi",
+      language: lang === "tw" ? "twi" : "english",
     });
   });
 
   if (result.missing_fields.length > 0) {
-    const question = nextFollowUpQuestion(result.missing_fields, result.follow_up_questions);
-    await sendWhatsAppText(from, question || "Could you give me a bit more detail about what happened?");
+    const question = nextFollowUpQuestion(result.missing_fields, result.follow_up_questions, lang);
+    await sendWhatsAppText(from, question || t.fallbackFollowUp);
     return;
   }
 
-  await sendWhatsAppText(from, `Thank you. Your case number is ${result.case_id}. We've recorded your report.`);
+  await sendWhatsAppText(from, t.confirmation(result.case_id));
   if (result.confirmationAudio) {
     await sendWhatsAppAudio(from, result.confirmationAudio);
   }

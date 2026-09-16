@@ -87,12 +87,12 @@ What a real integration would still need, beyond the hackathon prototype: writte
 - **Sept 15**: Built the USSD flow (bilingual, plain-language categories) and fraud alerts. Then ran three deeper passes that each found and fixed real bugs: a full audit (fraud-category mismatch, customers self-alerting, a duplicate-case race condition), a load test at simulated scale up to 200,000 cases (a memory leak, a full-table-scan bottleneck, a real case-ID collision), and a 100-point manual QA pass (a bad-amount parsing bug, a stack-trace leak on malformed requests). Verified directly — not assumed — that SQL-injection/XSS attempts are neutralized and the database survives a hard crash.
 - **Sept 15**: Added full authentication (dashboard login with session tokens, an API key on `/report`) and connected the dashboard to live backend data instead of static samples.
 - **Sept 16**: Closed out the remaining security items — signed/tokenized the USSD webhook, moved dashboard sessions into SQLite so a backend restart doesn't log everyone out, verified real Khaya pricing, and picked Render for hosting.
-- **Test suite**: 36 tests, all passing (`npm test` in `backend/`).
+- **Sept 16**: Mawuli signed the WhatsApp webhook (`X-Hub-Signature-256`, closing the last open security item) and added a language-choice step (English/Twi) and a restart command/button to the WhatsApp conversation, so a customer isn't stuck defaulting to Twi or stuck in a broken state with no way out.
+- **Test suite**: 47 tests, all passing (`npm test` in `backend/`).
 
 ---
 
 ## Known Issues — Still Open
 
-- [ ] **WhatsApp webhook isn't signature-verified yet** — Mawuli (driving the WhatsApp bot) still needs to verify Meta's `X-Hub-Signature-256` header on incoming calls, not just anyone posting to the URL.
 - [ ] **No leaked-secret check before demo/screen-sharing** — make sure `.env` or API keys never appear on screen during rehearsals or the presentation.
 - [ ] **Single Node process + synchronous SQLite is a ceiling for true horizontal scale** — fine at hackathon/early-product volume (tested to 200,000+ cases and thousands of concurrent requests with no issue); real "millions of users" growth would eventually need a server-based database and more than one process. Not worth solving before the demo.

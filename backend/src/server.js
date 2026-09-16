@@ -6,10 +6,22 @@ import { getCaseForCustomer, updateCaseStatus, getAllCases } from "./db/cases.js
 import { verifyWebhook, handleIncomingMessage } from "./channels/whatsapp.js";
 import { handleUssdRequest } from "./channels/ussd.js";
 import { login, logout, requireDashboardAuth, requireServiceApiKey, requireUssdWebhookToken } from "./services/auth.js";
+import { verifyWhatsAppSignature } from "./middleware/verifySignature.js";
 
 const app = express();
 app.use(cors({ origin: process.env.DASHBOARD_ORIGIN || "*" }));
-app.use(express.json());
+// The `verify` callback stashes the exact raw, unparsed body on req.rawBody
+// — verifyWhatsAppSignature needs those untouched bytes (not the
+// re-serialized JSON) to recompute Meta's signature correctly. Has to live
+// on this global parser, not a route-specific one, since this runs first
+// for every request and would otherwise already consume the body stream.
+app.use(
+  express.json({
+    verify: (req, res, buf) => {
+      req.rawBody = buf;
+    },
+  })
+);
 
 app.get("/health", (req, res) => {
   res.json({ status: "ok" });
@@ -112,8 +124,11 @@ app.patch("/cases/:caseId/status", requireDashboardAuth, (req, res) => {
 });
 
 // WhatsApp webhook (Meta verifies this URL with a GET, then POSTs incoming messages).
+// The body is already parsed by the global express.json() above (with
+// req.rawBody stashed for the signature check) — no need for a second,
+// route-specific express.json() here.
 app.get("/webhooks/whatsapp", verifyWebhook);
-app.post("/webhooks/whatsapp", express.json(), handleIncomingMessage);
+app.post("/webhooks/whatsapp", verifyWhatsAppSignature, handleIncomingMessage);
 
 // USSD webhook (Africa's Talking POSTs form-encoded fields per screen).
 // Register the callback URL with Africa's Talking as
