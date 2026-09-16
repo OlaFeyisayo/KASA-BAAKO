@@ -6,46 +6,66 @@ import { fetchCaseAudioUrl } from '../api'
 function CaseDetailsModal({ caseData, onClose, onStatusChange, token }) {
   const modalRef = useRef(null)
   const previouslyFocusedRef = useRef(null)
-  const [audioUrl, setAudioUrl] = useState(null)
-  const [audioState, setAudioState] = useState('idle') // idle | loading | ready | none | error
+  // One entry per voice note in caseData.audio_refs (a case can have
+  // several — the initial report, an answered follow-up, etc.), not just
+  // the most recent one.
+  const [audioClips, setAudioClips] = useState([]) // [{ url, state: 'loading' | 'ready' | 'none' | 'error' }]
+  const createdUrlsRef = useRef([]) // tracks blob: URLs for cleanup, kept out of state so an in-progress fetch for clip 2 can't have clip 1's still-visible URL yanked out from under it
 
-  // audio_ref is a WhatsApp media id, not a playable URL on its own — fetch
-  // the actual bytes through our backend's proxy route (see api.js) each
-  // time a different case is opened, and release the previous blob URL so
-  // switching between several cases' recordings doesn't leak memory.
+  // A WhatsApp media id isn't a playable URL on its own — fetch each
+  // clip's actual bytes through our backend's proxy route (see api.js).
   useEffect(() => {
-    if (!caseData?.audio_ref) {
-      setAudioUrl(null)
-      setAudioState('none')
+    const refs = caseData?.audio_refs ?? []
+
+    // Release the previous case's blob URLs before fetching this one's.
+    createdUrlsRef.current.forEach((url) => URL.revokeObjectURL(url))
+    createdUrlsRef.current = []
+
+    if (refs.length === 0) {
+      setAudioClips([])
       return
     }
 
     let cancelled = false
-    setAudioState('loading')
-    fetchCaseAudioUrl(token, caseData.case_id)
-      .then((url) => {
-        if (cancelled) return
-        if (!url) {
-          setAudioState('none')
-          return
-        }
-        setAudioUrl(url)
-        setAudioState('ready')
-      })
-      .catch(() => {
-        if (!cancelled) setAudioState('error')
-      })
+    setAudioClips(refs.map(() => ({ url: null, state: 'loading' })))
+
+    refs.forEach((_, index) => {
+      fetchCaseAudioUrl(token, caseData.case_id, index)
+        .then((url) => {
+          if (cancelled) {
+            if (url) URL.revokeObjectURL(url) // modal moved on before this resolved
+            return
+          }
+          if (url) createdUrlsRef.current.push(url)
+          setAudioClips((prev) => {
+            const next = [...prev]
+            next[index] = url ? { url, state: 'ready' } : { url: null, state: 'none' }
+            return next
+          })
+        })
+        .catch(() => {
+          if (!cancelled) {
+            setAudioClips((prev) => {
+              const next = [...prev]
+              next[index] = { url: null, state: 'error' }
+              return next
+            })
+          }
+        })
+    })
 
     return () => {
       cancelled = true
     }
-  }, [caseData?.case_id, caseData?.audio_ref, token])
+  }, [caseData?.case_id, token])
 
+  // Final cleanup on unmount (case-switch cleanup happens above instead,
+  // since that needs to run before fetching the NEW case's clips).
   useEffect(() => {
     return () => {
-      if (audioUrl) URL.revokeObjectURL(audioUrl)
+      createdUrlsRef.current.forEach((url) => URL.revokeObjectURL(url))
     }
-  }, [audioUrl])
+  }, [])
 
   useEffect(() => {
     function handleKeyDown(e) {
@@ -122,19 +142,31 @@ function CaseDetailsModal({ caseData, onClose, onStatusChange, token }) {
           </div>
 
           <div className="pt-2">
-            <p className="font-medium text-slate-500 dark:text-slate-400 mb-2">Audio Recording:</p>
-            {audioState === 'loading' && <p className="text-slate-400 italic">Loading audio…</p>}
-            {audioState === 'ready' && (
-              <audio controls className="w-full" src={audioUrl}>
-                Your browser does not support the audio element.
-              </audio>
-            )}
-            {audioState === 'error' && (
-              <p className="text-red-500 italic">Could not load the audio recording (it may have expired).</p>
-            )}
-            {(audioState === 'none' || audioState === 'idle') && (
-              <p className="text-slate-400 italic">No audio recording available.</p>
-            )}
+            <p className="font-medium text-slate-500 dark:text-slate-400 mb-2">
+              {audioClips.length > 1 ? 'Audio Recordings:' : 'Audio Recording:'}
+            </p>
+            {audioClips.length === 0 && <p className="text-slate-400 italic">No audio recording available.</p>}
+            <div className="space-y-2">
+              {audioClips.map((clip, index) => (
+                <div key={index}>
+                  {audioClips.length > 1 && (
+                    <p className="text-xs text-slate-400 mb-1">Recording {index + 1}</p>
+                  )}
+                  {clip.state === 'loading' && <p className="text-slate-400 italic">Loading audio…</p>}
+                  {clip.state === 'ready' && (
+                    <audio controls className="w-full" src={clip.url}>
+                      Your browser does not support the audio element.
+                    </audio>
+                  )}
+                  {clip.state === 'error' && (
+                    <p className="text-red-500 italic">Could not load this recording (it may have expired).</p>
+                  )}
+                  {clip.state === 'none' && (
+                    <p className="text-slate-400 italic">Recording no longer available.</p>
+                  )}
+                </div>
+              ))}
+            </div>
           </div>
         </div>
         <div className="border-t border-slate-200 dark:border-slate-700 px-6 py-4">

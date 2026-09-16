@@ -1,6 +1,6 @@
 import { test, mock } from "node:test";
 import assert from "node:assert/strict";
-import { buildCase } from "./llm.js";
+import { buildCase, buildSystemPrompt } from "./llm.js";
 
 function fakeAnthropicResponse(text) {
   return {
@@ -8,6 +8,31 @@ function fakeAnthropicResponse(text) {
     json: async () => ({ content: [{ type: "text", text }] }),
   };
 }
+
+// buildCase() used to always tell Claude the customer's message was
+// "originally spoken or typed in Twi" — true for USSD's Twi path, but
+// flatly wrong for an English customer, since buildCase() never even
+// received a language to adjust for. Also confirms the fix for a related,
+// separately-reported gap: incident_summary should always be written in
+// English (for MTN staff), while follow-up questions go back to the
+// customer in their own language.
+test("buildSystemPrompt tells Claude the truth about an English customer's message", () => {
+  const prompt = buildSystemPrompt("english");
+  assert.match(prompt, /The customer's message is in English/);
+  assert.doesNotMatch(prompt, /originally spoken or typed in Twi/);
+  assert.match(prompt, /question in English/);
+});
+
+test("buildSystemPrompt still describes a Twi customer's message correctly", () => {
+  const prompt = buildSystemPrompt("twi");
+  assert.match(prompt, /originally spoken or typed in Twi/);
+  assert.match(prompt, /question in Twi/);
+});
+
+test("buildSystemPrompt always instructs English for incident_summary, regardless of customer language", () => {
+  assert.match(buildSystemPrompt("twi"), /Write incident_summary in ENGLISH/);
+  assert.match(buildSystemPrompt("english"), /Write incident_summary in ENGLISH/);
+});
 
 test("buildCase degrades to 'nothing extracted' instead of throwing when Claude doesn't return valid JSON", async (t) => {
   // The exact failure mode hit in production: Claude replied with prose

@@ -17,7 +17,11 @@ CREATE TABLE IF NOT EXISTS cases (
   transaction_id TEXT,
   missing_fields TEXT,
   status TEXT NOT NULL DEFAULT 'received' CHECK (status IN ('received', 'under_review', 'resolved')),
-  audio_ref TEXT,
+  -- A JSON array of WhatsApp media ids — every voice note across the whole
+  -- conversation (the initial report, an answered follow-up, etc.), not
+  -- just the most recent one. See db/connection.js for the migration from
+  -- the older single-value `audio_ref` column this replaced.
+  audio_refs TEXT NOT NULL DEFAULT '[]',
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );

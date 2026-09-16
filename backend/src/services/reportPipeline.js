@@ -20,6 +20,22 @@ const EMPTY_CASE_FIELDS = {
   transaction_id: null,
 };
 
+// The spoken confirmation used to just read finalCase.incident_summary
+// verbatim — but that field is deliberately written in English case-file
+// style for MTN staff (see llm.js), so reading it aloud to the customer
+// sounded like a bureaucratic note being read back at them rather than a
+// natural confirmation of what they just told the bot. This builds a
+// proper first/second-person sentence instead, in the customer's own
+// language — and actually passes that language to Khaya TTS below, which
+// previously always defaulted to Twi regardless (an English confirmation
+// was being synthesized with Khaya's Twi voice model).
+function buildConfirmationSpeech(finalCase) {
+  if (finalCase.language === "twi") {
+    return `Meda wo ase. Yɛahyɛ wo amanneɛbɔ a ɛfa ${finalCase.fraud_category} ho — sika ${finalCase.amount} a ɛkɔɔ mu ${finalCase.incident_date}. Wo case number ne ${finalCase.case_id}. Fa saa number yi sie na wode hwɛ wo case tebea.`;
+  }
+  return `Thank you. We've recorded your ${finalCase.fraud_category} report — ${finalCase.amount} cedis, on ${finalCase.incident_date}. Your case number is ${finalCase.case_id}. Please keep this number to check your case status.`;
+}
+
 // Per-customer lock: WhatsApp decides whether an incoming message continues
 // an open case by looking one up (getOpenCaseForCustomer) *before* calling
 // processReport(). If the same customer's messages arrive close together,
@@ -113,7 +129,7 @@ export async function processReport({ text, audioBuffer, contentType, customer_c
     throw new Error("No text or audio provided");
   }
 
-  const result = await buildCase(reportText);
+  const result = await buildCase(reportText, language === "english" ? "english" : "twi");
 
   let existingCase = EMPTY_CASE_FIELDS;
   if (case_id) {
@@ -160,7 +176,14 @@ export async function processReport({ text, audioBuffer, contentType, customer_c
         // 'audio/wav'") — mp3 is in that allowed list, so request that
         // instead. See channels/whatsapp.js's sendWhatsAppAudio, which
         // uploads whatever format this produces.
-        confirmationAudio = await synthesizeSpeech(finalCase.incident_summary, { format: "mp3" });
+        //
+        // language also has to be passed explicitly — Khaya's own default
+        // is "twi" (ISO 639-3), so an English confirmation was previously
+        // being synthesized with Khaya's Twi voice model every time.
+        confirmationAudio = await synthesizeSpeech(buildConfirmationSpeech(finalCase), {
+          format: "mp3",
+          language: finalCase.language === "twi" ? "twi" : "eng",
+        });
       } catch (err) {
         console.error("[reportPipeline] TTS confirmation failed, continuing without audio:", err);
       }

@@ -37,15 +37,16 @@ export async function fetchCases(token) {
   return res.json()
 }
 
-// Returns a blob: URL for a case's voice note, or null if it has none.
-// audio_ref (a WhatsApp media id) isn't itself a playable URL — the
-// backend's /cases/:caseId/audio route re-fetches the actual bytes from
+// Returns a blob: URL for one of a case's voice notes (by its position in
+// audio_refs — a case can have several), or null if there's none at that
+// index. A WhatsApp media id isn't itself a playable URL — the backend's
+// /cases/:caseId/audio/:index route re-fetches the actual bytes from
 // WhatsApp using our access token. Fetched here (not used directly as an
 // <audio src>) so the Authorization header can actually be sent — a plain
 // <audio src="...&token=..."> would leak the session token into browser
 // history/server logs instead.
-export async function fetchCaseAudioUrl(token, caseId) {
-  const res = await fetch(`${API_BASE}/cases/${encodeURIComponent(caseId)}/audio`, {
+export async function fetchCaseAudioUrl(token, caseId, index) {
+  const res = await fetch(`${API_BASE}/cases/${encodeURIComponent(caseId)}/audio/${index}`, {
     headers: { Authorization: `Bearer ${token}` },
   })
   if (res.status === 401) {

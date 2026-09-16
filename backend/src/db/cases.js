@@ -21,6 +21,7 @@ function toRow(caseObj) {
   return {
     ...caseObj,
     missing_fields: JSON.stringify(caseObj.missing_fields ?? []),
+    audio_refs: JSON.stringify(caseObj.audio_refs ?? []),
     suspected_number_normalized: caseObj.suspected_number ? normalizePhoneNumber(caseObj.suspected_number) : null,
   };
 }
@@ -30,6 +31,7 @@ function fromRow(row) {
   return {
     ...row,
     missing_fields: JSON.parse(row.missing_fields || "[]"),
+    audio_refs: JSON.parse(row.audio_refs || "[]"),
   };
 }
 
@@ -43,17 +45,19 @@ function fromRow(row) {
  * @param {string} [params.language="twi"]
  * @param {object} params.caseFields - Output of llm.js's buildCase().case
  * @param {string[]} params.missing_fields - Output of llm.js's buildCase().missing_fields
- * @param {string} [params.audio_ref]
+ * @param {string} [params.audio_ref] - A WhatsApp media id, if this first
+ *   message was a voice note. Stored as the first entry of audio_refs —
+ *   see updateCaseFields for how later voice notes get appended.
  * @returns {object} The full stored case, including its case_id.
  */
 const INSERT_CASE_SQL = `INSERT INTO cases (
   case_id, customer_contact, channel, input_mode, language,
   incident_summary, incident_date, amount, fraud_category,
-  suspected_number, suspected_number_normalized, transaction_id, missing_fields, status, audio_ref
+  suspected_number, suspected_number_normalized, transaction_id, missing_fields, status, audio_refs
 ) VALUES (
   @case_id, @customer_contact, @channel, @input_mode, @language,
   @incident_summary, @incident_date, @amount, @fraud_category,
-  @suspected_number, @suspected_number_normalized, @transaction_id, @missing_fields, @status, @audio_ref
+  @suspected_number, @suspected_number_normalized, @transaction_id, @missing_fields, @status, @audio_refs
 )`;
 
 const MAX_CASE_ID_ATTEMPTS = 5;
@@ -69,6 +73,7 @@ export function createCase({
   generateId = generateCaseId, // overridable in tests to force/prove collision retries
 }) {
   const status = "received";
+  const audio_refs = audio_ref ? [audio_ref] : [];
 
   // generateCaseId() is random, not sequential — an ID collision is
   // possible (however unlikely) at high volume, and should never lose the
@@ -84,7 +89,7 @@ export function createCase({
           channel,
           input_mode,
           language,
-          audio_ref,
+          audio_refs,
           status,
           ...caseFields,
           missing_fields,
@@ -122,12 +127,16 @@ export function mergeCaseFields(existing, incoming) {
  * @param {object} fields
  * @param {string[]} missingFields
  * @param {string} [audioRef] - A WhatsApp media id for a voice note received
- *   on this turn, if any. Omit (or pass null/undefined) to leave whatever
- *   audio_ref the case already has untouched — a later text-only turn (e.g.
- *   answering a follow-up by typing) must not erase an earlier voice note.
+ *   on this turn, if any. Appended to the case's existing audio_refs list —
+ *   every voice note sent across the conversation is kept, not just the
+ *   most recent one. Omit (or pass null/undefined) if this turn was text,
+ *   so a typed follow-up answer doesn't add a phantom entry.
  * @returns {object} The updated case.
  */
 export function updateCaseFields(caseId, fields, missingFields, audioRef) {
+  const existing = fromRow(db.prepare("SELECT * FROM cases WHERE case_id = ?").get(caseId));
+  const audio_refs = audioRef ? [...(existing?.audio_refs ?? []), audioRef] : (existing?.audio_refs ?? []);
+
   db.prepare(
     `UPDATE cases SET
       incident_summary = @incident_summary,
@@ -138,10 +147,10 @@ export function updateCaseFields(caseId, fields, missingFields, audioRef) {
       suspected_number_normalized = @suspected_number_normalized,
       transaction_id = @transaction_id,
       missing_fields = @missing_fields,
-      audio_ref = COALESCE(@audio_ref, audio_ref),
+      audio_refs = @audio_refs,
       updated_at = datetime('now')
     WHERE case_id = @case_id`
-  ).run(toRow({ case_id: caseId, ...fields, missing_fields: missingFields, audio_ref: audioRef ?? null }));
+  ).run(toRow({ case_id: caseId, ...fields, missing_fields: missingFields, audio_refs }));
 
   return fromRow(db.prepare("SELECT * FROM cases WHERE case_id = ?").get(caseId));
 }

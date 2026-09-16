@@ -113,20 +113,24 @@ app.get("/cases/:caseId", (req, res) => {
   res.json(found);
 });
 
-// Streams a case's original voice note (if it has one) for dashboard
-// playback. audio_ref is a WhatsApp media id, not a fetchable URL —
-// WhatsApp requires our Bearer token on every media request, and the
-// one-time download URL it hands out expires quickly, so this proxies
-// through our own server rather than the dashboard hitting Meta directly.
+// Streams one of a case's voice notes (a case can have several — the
+// initial report, an answered follow-up, etc. — see db/cases.js's
+// audio_refs) for dashboard playback, by its position in that array.
+// audio_refs holds WhatsApp media ids, not fetchable URLs — WhatsApp
+// requires our Bearer token on every media request, and the one-time
+// download URL it hands out expires quickly, so this proxies through our
+// own server rather than the dashboard hitting Meta directly.
 // Dashboard-only, same sensitivity reasoning as GET /cases.
-app.get("/cases/:caseId/audio", requireDashboardAuth, async (req, res) => {
+app.get("/cases/:caseId/audio/:index", requireDashboardAuth, async (req, res) => {
   const found = getCaseById(req.params.caseId);
-  if (!found || !found.audio_ref) {
-    return res.status(404).json({ error: "No audio recording for this case" });
+  const index = Number(req.params.index);
+  const mediaId = found?.audio_refs?.[index];
+  if (!found || !Number.isInteger(index) || !mediaId) {
+    return res.status(404).json({ error: "No audio recording at that index for this case" });
   }
 
   try {
-    const { buffer, mimeType } = await downloadWhatsAppMedia(found.audio_ref);
+    const { buffer, mimeType } = await downloadWhatsAppMedia(mediaId);
     res.set("Content-Type", mimeType || "audio/ogg");
     res.send(buffer);
   } catch (err) {
