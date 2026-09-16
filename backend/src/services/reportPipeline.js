@@ -144,7 +144,15 @@ export async function processReport({ text, audioBuffer, contentType, customer_c
 
   if (merged.missing_fields.length === 0) {
     if (synthesizeConfirmation) {
-      confirmationAudio = await synthesizeSpeech(finalCase.incident_summary);
+      // A TTS failure (Khaya quota, network blip, bad text) must never take
+      // down an otherwise-successful report: the case is already saved at
+      // this point, so the customer should still get their case number even
+      // without spoken audio, instead of a generic error hiding a real case.
+      try {
+        confirmationAudio = await synthesizeSpeech(finalCase.incident_summary);
+      } catch (err) {
+        console.error("[reportPipeline] TTS confirmation failed, continuing without audio:", err);
+      }
     }
 
     const candidates = getCasesBySuspectedNumber(normalizePhoneNumber(finalCase.suspected_number), finalCase.case_id);
