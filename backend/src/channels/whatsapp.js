@@ -179,6 +179,8 @@ const TEXT = {
     ],
     askVoice: "Please send a voice note describing what happened.",
     askText: "Please describe what happened.",
+    processingVoice: "Got your voice note — transcribing it now. This can take a minute or two for longer recordings, please hold on.",
+    voiceTimedOut: "Sorry, that recording is taking too long to process (it may be quite long, or our connection is slow right now). Please try sending it again, or type your report instead.",
     statusFound: (found) => `Case ${found.case_id}: status is "${found.status}".`,
     statusNotFound: "We couldn't find that case number for your phone number.",
     unsupportedMessage: "Sorry, I can only understand voice notes or text messages right now.",
@@ -199,6 +201,8 @@ const TEXT = {
     ],
     askVoice: "Mesrɛ wo, fa wo nne kyerɛ deɛ ɛsii.",
     askText: "Mesrɛ wo, kyerɛw deɛ ɛsii.",
+    processingVoice: "Yɛanya wo nne — yɛretwerɛ mu seesei. Ebia ɛbɛgye simma kakraa sɛ ɛyɛ tenten a, mesrɛ wo twɛn.",
+    voiceTimedOut: "Yɛpa wo kyɛw, saa nne yi gye bere tenten dodo sɛ yɛretwerɛ mu (ebia ɛware, anaasɛ yɛn connection no yɛ brɛoo seesei). Mesrɛ wo, sɔ hwɛ bio, anaasɛ kyerɛw wo amanneɛbɔ mmom.",
     statusFound: (found) => `Case ${found.case_id}: gyinabea ne "${found.status}".`,
     statusNotFound: "Yɛanhu case a saa number no wɔ wo telefon number no ho.",
     unsupportedMessage: "Yɛpa wo kyɛw, mate wo nne anaa wo nkrasɛm nko ara.",
@@ -464,24 +468,45 @@ export async function handleIncomingMessage(req, res) {
 async function runReportTurn({ from, text, audioBuffer, contentType, input_mode, lang, caseId, skipNumberFollowUp = false, audioRef }) {
   const t = TEXT[lang];
 
+  // ASR's own timeout now scales up to several minutes for a long
+  // recording (see asr.js) — without this, a customer watching a silent
+  // chat for that long would reasonably assume the bot is broken.
+  if (input_mode === "voice") {
+    await sendWhatsAppText(from, t.processingVoice);
+  }
+
   // Locked so that two near-simultaneous messages from the same customer
   // can't both see "no open case yet" and each create a separate case —
   // see withCustomerLock's comment in reportPipeline.js.
-  const result = await withCustomerLock(from, async () => {
-    const targetCaseId = caseId ?? getOpenCaseForCustomer(from)?.case_id;
+  let result;
+  try {
+    result = await withCustomerLock(from, async () => {
+      const targetCaseId = caseId ?? getOpenCaseForCustomer(from)?.case_id;
 
-    return processReport({
-      text,
-      audioBuffer,
-      contentType,
-      customer_contact: from,
-      channel: "whatsapp",
-      input_mode,
-      case_id: targetCaseId,
-      language: lang === "tw" ? "twi" : "english",
-      audio_ref: audioRef,
+      return processReport({
+        text,
+        audioBuffer,
+        contentType,
+        customer_contact: from,
+        channel: "whatsapp",
+        input_mode,
+        case_id: targetCaseId,
+        language: lang === "tw" ? "twi" : "english",
+        audio_ref: audioRef,
+      });
     });
-  });
+  } catch (err) {
+    // asr.js already retries a timeout once internally — this is the
+    // *second* failure, so retrying again here wouldn't help. Give the
+    // customer an actual way forward (their case, if one exists, is
+    // untouched — they can try again or switch to typing) instead of the
+    // generic error every other failure gets.
+    if (input_mode === "voice" && /Khaya ASR request timed out/i.test(err.message)) {
+      await sendWhatsAppText(from, t.voiceTimedOut);
+      return;
+    }
+    throw err;
+  }
 
   if (result.missing_fields.length > 0) {
     const question = nextFollowUpQuestion(result.missing_fields, result.follow_up_questions, lang);
