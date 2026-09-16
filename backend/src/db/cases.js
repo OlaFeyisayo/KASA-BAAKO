@@ -121,9 +121,13 @@ export function mergeCaseFields(existing, incoming) {
  * @param {string} caseId
  * @param {object} fields
  * @param {string[]} missingFields
+ * @param {string} [audioRef] - A WhatsApp media id for a voice note received
+ *   on this turn, if any. Omit (or pass null/undefined) to leave whatever
+ *   audio_ref the case already has untouched — a later text-only turn (e.g.
+ *   answering a follow-up by typing) must not erase an earlier voice note.
  * @returns {object} The updated case.
  */
-export function updateCaseFields(caseId, fields, missingFields) {
+export function updateCaseFields(caseId, fields, missingFields, audioRef) {
   db.prepare(
     `UPDATE cases SET
       incident_summary = @incident_summary,
@@ -134,10 +138,24 @@ export function updateCaseFields(caseId, fields, missingFields) {
       suspected_number_normalized = @suspected_number_normalized,
       transaction_id = @transaction_id,
       missing_fields = @missing_fields,
+      audio_ref = COALESCE(@audio_ref, audio_ref),
       updated_at = datetime('now')
     WHERE case_id = @case_id`
-  ).run(toRow({ case_id: caseId, ...fields, missing_fields: missingFields }));
+  ).run(toRow({ case_id: caseId, ...fields, missing_fields: missingFields, audio_ref: audioRef ?? null }));
 
+  return fromRow(db.prepare("SELECT * FROM cases WHERE case_id = ?").get(caseId));
+}
+
+/**
+ * Looks up a case by id with no phone-ownership check — for staff/dashboard
+ * use only, where requireDashboardAuth already gates access to every case.
+ * getCaseForCustomer (above) is the customer-facing equivalent that DOES
+ * check phone ownership; don't use this one for anything a customer triggers.
+ *
+ * @param {string} caseId
+ * @returns {object|null}
+ */
+export function getCaseById(caseId) {
   return fromRow(db.prepare("SELECT * FROM cases WHERE case_id = ?").get(caseId));
 }
 

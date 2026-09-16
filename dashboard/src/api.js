@@ -37,6 +37,28 @@ export async function fetchCases(token) {
   return res.json()
 }
 
+// Returns a blob: URL for a case's voice note, or null if it has none.
+// audio_ref (a WhatsApp media id) isn't itself a playable URL — the
+// backend's /cases/:caseId/audio route re-fetches the actual bytes from
+// WhatsApp using our access token. Fetched here (not used directly as an
+// <audio src>) so the Authorization header can actually be sent — a plain
+// <audio src="...&token=..."> would leak the session token into browser
+// history/server logs instead.
+export async function fetchCaseAudioUrl(token, caseId) {
+  const res = await fetch(`${API_BASE}/cases/${encodeURIComponent(caseId)}/audio`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (res.status === 401) {
+    const err = new Error('Session expired')
+    err.code = 'UNAUTHORIZED'
+    throw err
+  }
+  if (res.status === 404) return null
+  if (!res.ok) throw new Error('Failed to load audio recording')
+  const blob = await res.blob()
+  return URL.createObjectURL(blob)
+}
+
 export async function updateCaseStatus(token, caseId, status) {
   const res = await fetch(`${API_BASE}/cases/${encodeURIComponent(caseId)}/status`, {
     method: 'PATCH',

@@ -2,8 +2,8 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import { processReport } from "./services/reportPipeline.js";
-import { getCaseForCustomer, updateCaseStatus, getAllCases } from "./db/cases.js";
-import { verifyWebhook, handleIncomingMessage } from "./channels/whatsapp.js";
+import { getCaseForCustomer, getCaseById, updateCaseStatus, getAllCases } from "./db/cases.js";
+import { verifyWebhook, handleIncomingMessage, downloadWhatsAppMedia } from "./channels/whatsapp.js";
 import { handleUssdRequest } from "./channels/ussd.js";
 import { login, logout, requireDashboardAuth, requireServiceApiKey, requireUssdWebhookToken } from "./services/auth.js";
 import { verifyWhatsAppSignature } from "./middleware/verifySignature.js";
@@ -111,6 +111,28 @@ app.get("/cases/:caseId", (req, res) => {
   }
 
   res.json(found);
+});
+
+// Streams a case's original voice note (if it has one) for dashboard
+// playback. audio_ref is a WhatsApp media id, not a fetchable URL —
+// WhatsApp requires our Bearer token on every media request, and the
+// one-time download URL it hands out expires quickly, so this proxies
+// through our own server rather than the dashboard hitting Meta directly.
+// Dashboard-only, same sensitivity reasoning as GET /cases.
+app.get("/cases/:caseId/audio", requireDashboardAuth, async (req, res) => {
+  const found = getCaseById(req.params.caseId);
+  if (!found || !found.audio_ref) {
+    return res.status(404).json({ error: "No audio recording for this case" });
+  }
+
+  try {
+    const { buffer, mimeType } = await downloadWhatsAppMedia(found.audio_ref);
+    res.set("Content-Type", mimeType || "audio/ogg");
+    res.send(buffer);
+  } catch (err) {
+    console.error("[cases/:caseId/audio]", err);
+    res.status(502).json({ error: "Could not retrieve the audio recording (it may have expired)" });
+  }
 });
 
 // For the MTN dashboard: change a case's status.

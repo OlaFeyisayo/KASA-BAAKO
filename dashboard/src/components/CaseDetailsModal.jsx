@@ -1,10 +1,51 @@
-import { useEffect, useRef } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import StatusBadge from './StatusBadge'
 import { formatAmount } from '../utils/formatAmount'
+import { fetchCaseAudioUrl } from '../api'
 
-function CaseDetailsModal({ caseData, onClose, onStatusChange }) {
+function CaseDetailsModal({ caseData, onClose, onStatusChange, token }) {
   const modalRef = useRef(null)
   const previouslyFocusedRef = useRef(null)
+  const [audioUrl, setAudioUrl] = useState(null)
+  const [audioState, setAudioState] = useState('idle') // idle | loading | ready | none | error
+
+  // audio_ref is a WhatsApp media id, not a playable URL on its own — fetch
+  // the actual bytes through our backend's proxy route (see api.js) each
+  // time a different case is opened, and release the previous blob URL so
+  // switching between several cases' recordings doesn't leak memory.
+  useEffect(() => {
+    if (!caseData?.audio_ref) {
+      setAudioUrl(null)
+      setAudioState('none')
+      return
+    }
+
+    let cancelled = false
+    setAudioState('loading')
+    fetchCaseAudioUrl(token, caseData.case_id)
+      .then((url) => {
+        if (cancelled) return
+        if (!url) {
+          setAudioState('none')
+          return
+        }
+        setAudioUrl(url)
+        setAudioState('ready')
+      })
+      .catch(() => {
+        if (!cancelled) setAudioState('error')
+      })
+
+    return () => {
+      cancelled = true
+    }
+  }, [caseData?.case_id, caseData?.audio_ref, token])
+
+  useEffect(() => {
+    return () => {
+      if (audioUrl) URL.revokeObjectURL(audioUrl)
+    }
+  }, [audioUrl])
 
   useEffect(() => {
     function handleKeyDown(e) {
@@ -82,12 +123,16 @@ function CaseDetailsModal({ caseData, onClose, onStatusChange }) {
 
           <div className="pt-2">
             <p className="font-medium text-slate-500 dark:text-slate-400 mb-2">Audio Recording:</p>
-            {caseData.audio_ref ? (
-              <audio controls className="w-full">
-                <source src={caseData.audio_ref} />
+            {audioState === 'loading' && <p className="text-slate-400 italic">Loading audio…</p>}
+            {audioState === 'ready' && (
+              <audio controls className="w-full" src={audioUrl}>
                 Your browser does not support the audio element.
               </audio>
-            ) : (
+            )}
+            {audioState === 'error' && (
+              <p className="text-red-500 italic">Could not load the audio recording (it may have expired).</p>
+            )}
+            {(audioState === 'none' || audioState === 'idle') && (
               <p className="text-slate-400 italic">No audio recording available.</p>
             )}
           </div>

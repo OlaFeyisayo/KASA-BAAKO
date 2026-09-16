@@ -114,8 +114,14 @@ export async function sendWhatsAppAudio(to, audioBuffer) {
   }
 }
 
-/** Downloads an incoming WhatsApp voice note by its media id. */
-async function downloadWhatsAppMedia(mediaId) {
+/**
+ * Downloads an incoming WhatsApp voice note by its media id. Exported so
+ * server.js's dashboard audio-playback route can re-fetch the same media
+ * later using the id stored as the case's audio_ref — a WhatsApp media id
+ * is a durable reference, but the one-time download URL it resolves to
+ * expires quickly, so it can't be stored directly and played back as-is.
+ */
+export async function downloadWhatsAppMedia(mediaId) {
   const metaResponse = await fetch(graphUrl(mediaId), { headers: authHeaders() });
   const meta = await metaResponse.json();
   if (!metaResponse.ok) {
@@ -140,6 +146,12 @@ async function downloadWhatsAppMedia(mediaId) {
 // stored language first, so a customer mid-conversation isn't re-asked.
 const languageByCustomer = new Map();
 
+// Tracks a customer we've asked "what's the suspect's number?" as one last
+// question after their report was otherwise already complete. Keyed by
+// phone, value is the case_id being completed. Same in-memory/reset-on-
+// restart tradeoff as languageByCustomer above.
+const pendingNumberFollowUp = new Map();
+
 function getLanguage(from, openCase) {
   if (languageByCustomer.has(from)) return languageByCustomer.get(from);
   if (openCase?.language === "twi") return "tw";
@@ -155,6 +167,7 @@ const TEXT = {
     unsupportedMessage: "Sorry, I can only understand voice notes or text messages right now.",
     genericError: "Something went wrong processing your report. Please try again.",
     fallbackFollowUp: "Could you give me a bit more detail about what happened?",
+    askSuspectedNumber: "Do you have the phone number the fraudster used? If you don't know it, just reply \"unknown\".",
     confirmation: (id) => `Thank you. Your case number is ${id}. We've recorded your report.`,
     restarted: "Okay, let's start over.",
   },
@@ -165,6 +178,7 @@ const TEXT = {
     unsupportedMessage: "Yɛpa wo kyɛw, mate wo nne anaa wo nkrasɛm nko ara.",
     genericError: "Biribi ankɔ yie wɔ wo amanneɛbɔ no ho adwuma mu. Yɛsrɛ wo, sɔ hwɛ bio.",
     fallbackFollowUp: "Wobɛtumi aka deɛ ɛsii no mu nsɛm bi akyerɛ me?",
+    askSuspectedNumber: "Wowɔ telefon nɔma a nsisifoɔ no de yɛɛ eyi? Sɛ wonnim a, kyerɛw \"unknown\".",
     confirmation: (id) => `Meda wo ase. Wo case number ne ${id}. Yɛasie wo amanneɛbɔ no.`,
     restarted: "Ɛyɛ, momma yɛnhyɛ aseɛ bio.",
   },
@@ -237,6 +251,31 @@ export async function handleIncomingMessage(req, res) {
     }
     const t = TEXT[lang];
 
+    // Answering the "what's the suspect's number?" follow-up — this case is
+    // otherwise already complete (missing_fields was already empty when we
+    // asked), so it's addressed by case_id directly rather than via
+    // getOpenCaseForCustomer, which only finds cases still missing a
+    // REQUIRED field.
+    if (pendingNumberFollowUp.has(from)) {
+      if (message.type === "text" || message.type === "audio") {
+        const caseId = pendingNumberFollowUp.get(from);
+        pendingNumberFollowUp.delete(from);
+
+        if (message.type === "audio") {
+          const { buffer, mimeType } = await downloadWhatsAppMedia(message.audio.id);
+          await runReportTurn({
+            from, audioBuffer: buffer, contentType: mimeType, input_mode: "voice", lang,
+            caseId, skipNumberFollowUp: true, audioRef: message.audio.id,
+          });
+        } else {
+          await runReportTurn({ from, text: typedText, input_mode: "text", lang, caseId, skipNumberFollowUp: true });
+        }
+        return;
+      }
+      await sendWhatsAppText(from, t.unsupportedMessage);
+      return;
+    }
+
     if (message.type === "text") {
       const body = typedText;
 
@@ -252,7 +291,7 @@ export async function handleIncomingMessage(req, res) {
 
     if (message.type === "audio") {
       const { buffer, mimeType } = await downloadWhatsAppMedia(message.audio.id);
-      await runReportTurn({ from, audioBuffer: buffer, contentType: mimeType, input_mode: "voice", lang });
+      await runReportTurn({ from, audioBuffer: buffer, contentType: mimeType, input_mode: "voice", lang, audioRef: message.audio.id });
       return;
     }
 
@@ -264,14 +303,14 @@ export async function handleIncomingMessage(req, res) {
   }
 }
 
-async function runReportTurn({ from, text, audioBuffer, contentType, input_mode, lang }) {
+async function runReportTurn({ from, text, audioBuffer, contentType, input_mode, lang, caseId, skipNumberFollowUp = false, audioRef }) {
   const t = TEXT[lang];
 
   // Locked so that two near-simultaneous messages from the same customer
   // can't both see "no open case yet" and each create a separate case —
   // see withCustomerLock's comment in reportPipeline.js.
   const result = await withCustomerLock(from, async () => {
-    const openCase = getOpenCaseForCustomer(from);
+    const targetCaseId = caseId ?? getOpenCaseForCustomer(from)?.case_id;
 
     return processReport({
       text,
@@ -280,8 +319,9 @@ async function runReportTurn({ from, text, audioBuffer, contentType, input_mode,
       customer_contact: from,
       channel: "whatsapp",
       input_mode,
-      case_id: openCase?.case_id,
+      case_id: targetCaseId,
       language: lang === "tw" ? "twi" : "english",
+      audio_ref: audioRef,
     });
   });
 
@@ -290,6 +330,18 @@ async function runReportTurn({ from, text, audioBuffer, contentType, input_mode,
     await sendWhatsAppText(from, question || t.fallbackFollowUp);
     return;
   }
+
+  // Everything required is in, but suspected_number is deliberately
+  // optional (see llm.js) — worth one explicit ask since it's the field
+  // alerts.js actually cross-matches repeat scammers on, but only once:
+  // skipNumberFollowUp is true on the turn answering this very question,
+  // so we don't loop asking it forever.
+  if (!skipNumberFollowUp && !result.case.suspected_number) {
+    pendingNumberFollowUp.set(from, result.case_id);
+    await sendWhatsAppText(from, t.askSuspectedNumber);
+    return;
+  }
+  pendingNumberFollowUp.delete(from);
 
   await sendWhatsAppText(from, t.confirmation(result.case_id));
   if (result.confirmationAudio) {

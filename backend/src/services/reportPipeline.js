@@ -83,6 +83,10 @@ export function _lockMapSizeForTests() {
  * @param {"voice"|"text"|"guided"} params.input_mode
  * @param {string} [params.case_id] - Pass to continue an existing (incomplete) case.
  * @param {string} [params.language="twi"]
+ * @param {string} [params.audio_ref] - A durable reference to this turn's
+ *   voice note (e.g. a WhatsApp media id), if input_mode is "voice". Stored
+ *   on the case for the dashboard to play back later — see
+ *   channels/whatsapp.js's audio proxy route.
  * @param {boolean} [params.synthesizeConfirmation=true] - Set false for text-only
  *   channels (USSD) so we don't waste a Khaya TTS call on audio nobody can play.
  * @returns {Promise<{
@@ -94,7 +98,7 @@ export function _lockMapSizeForTests() {
  *   alert: object|null
  * }>}
  */
-export async function processReport({ text, audioBuffer, contentType, customer_contact, channel, input_mode, case_id, language, synthesizeConfirmation = true }) {
+export async function processReport({ text, audioBuffer, contentType, customer_contact, channel, input_mode, case_id, language, audio_ref, synthesizeConfirmation = true }) {
   if (!customer_contact || !channel || !input_mode) {
     throw new Error("customer_contact, channel, and input_mode are required");
   }
@@ -125,7 +129,7 @@ export async function processReport({ text, audioBuffer, contentType, customer_c
   const merged = mergeCaseFields(existingCase, result.case);
 
   const finalCase = case_id
-    ? updateCaseFields(case_id, merged.fields, merged.missing_fields)
+    ? updateCaseFields(case_id, merged.fields, merged.missing_fields, audio_ref)
     : createCase({
         customer_contact,
         channel,
@@ -133,6 +137,7 @@ export async function processReport({ text, audioBuffer, contentType, customer_c
         language: language || "twi",
         caseFields: merged.fields,
         missing_fields: merged.missing_fields,
+        audio_ref,
       });
 
   const followUpQuestions = Object.fromEntries(

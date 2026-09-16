@@ -47,8 +47,11 @@ function App() {
     setCases([])
   }, [])
 
-  const loadCases = useCallback(async (activeToken) => {
-    setLoading(true)
+  // `silent` skips the loading spinner — used for the background poll below
+  // so a new case appearing doesn't yank the table away from a staff member
+  // who's mid-scroll or mid-read. The initial load on login still shows it.
+  const loadCases = useCallback(async (activeToken, { silent = false } = {}) => {
+    if (!silent) setLoading(true)
     setLoadError('')
     try {
       const data = await fetchCases(activeToken)
@@ -56,16 +59,37 @@ function App() {
     } catch (err) {
       if (err.code === 'UNAUTHORIZED') {
         handleSessionExpired()
-      } else {
+      } else if (!silent) {
+        // A background poll failing (e.g. a momentary network blip) isn't
+        // worth surfacing as an error banner — it'll just quietly retry on
+        // the next tick. Only the initial/manual load shows this.
         setLoadError('Could not load cases from the server. Please try again.')
       }
     } finally {
-      setLoading(false)
+      if (!silent) setLoading(false)
     }
   }, [handleSessionExpired])
 
   useEffect(() => {
     if (token) loadCases(token)
+  }, [token, loadCases])
+
+  // Keeps the case list current without a manual refresh — e.g. a new
+  // WhatsApp/USSD report coming in while a staff member has the dashboard
+  // open. Plain polling (no websocket/SSE infra exists yet) is enough at
+  // this scale; stops as soon as the tab is hidden/backgrounded so it
+  // doesn't keep hitting the server for a dashboard nobody's looking at.
+  useEffect(() => {
+    if (!token) return
+
+    const POLL_INTERVAL_MS = 15000
+    const interval = setInterval(() => {
+      if (document.visibilityState === 'visible') {
+        loadCases(token, { silent: true })
+      }
+    }, POLL_INTERVAL_MS)
+
+    return () => clearInterval(interval)
   }, [token, loadCases])
 
   if (!token) {
@@ -204,6 +228,7 @@ function App() {
         caseData={selectedCase}
         onClose={() => setSelectedCase(null)}
         onStatusChange={handleStatusChange}
+        token={token}
       />
     </div>
   )
