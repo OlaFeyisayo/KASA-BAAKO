@@ -1,11 +1,15 @@
 // Step 6: WhatsApp bot via Meta's WhatsApp Cloud API — greeting, language
-// choice, and the actual report turn (voice or text), through the shared
-// reportPipeline (same one channels/ussd.js uses) so ASR/LLM/DB/TTS/alerts
-// only live in one place.
+// choice, mode choice (voice/text/guided), and the actual report turn,
+// through the shared reportPipeline (same one channels/ussd.js uses) so
+// ASR/LLM/DB/TTS/alerts only live in one place.
 //
-// "Guided" (quick-reply buttons) mode is deliberately not built here —
-// unlike USSD, WhatsApp customers can already type or speak freely, so a
-// forced step-by-step flow would add friction rather than accessibility.
+// Guided mode collects answers via buttons and free-text prompts, then
+// combines them into one natural-language block submitted through the
+// SAME processReport() path text/voice use — buildCase() still does the
+// real extraction/categorization, so there's no separate field-assignment
+// logic to keep in sync with it. A customer can also just send a voice
+// note or type directly at any point without tapping through the mode
+// menu first — it's an offered shortcut, not a gate.
 //
 // Conversation UX (language choice, mode-agnostic message handling,
 // restart) added on top of the original voice/text implementation, closing
@@ -117,7 +121,7 @@ export async function sendWhatsAppAudio(to, audioBuffer) {
 /**
  * Downloads an incoming WhatsApp voice note by its media id. Exported so
  * server.js's dashboard audio-playback route can re-fetch the same media
- * later using the id stored as the case's audio_ref — a WhatsApp media id
+ * later using an id stored in the case's audio_refs — a WhatsApp media id
  * is a durable reference, but the one-time download URL it resolves to
  * expires quickly, so it can't be stored directly and played back as-is.
  */
@@ -152,6 +156,11 @@ const languageByCustomer = new Map();
 // restart tradeoff as languageByCustomer above.
 const pendingNumberFollowUp = new Map();
 
+// Tracks a customer mid-guided-flow: { step, answers }. Same in-memory/
+// reset-on-restart tradeoff as the maps above — a restart mid-guided-flow
+// just starts over, which is fine.
+const guidedFlowByCustomer = new Map();
+
 function getLanguage(from, openCase) {
   if (languageByCustomer.has(from)) return languageByCustomer.get(from);
   if (openCase?.language === "twi") return "tw";
@@ -161,10 +170,19 @@ function getLanguage(from, openCase) {
 
 const TEXT = {
   en: {
-    languageAck: "Okay — we'll continue in English.\n\nSend a voice note or type your report, whenever you're ready.",
+    modeChoicePrompt:
+      "Okay — we'll continue in English.\n\nHow would you like to report the incident? (Or just send a voice note or type your report directly, anytime.)",
+    modeButtons: [
+      { id: "mode_voice", title: "🎤 Voice" },
+      { id: "mode_text", title: "✍️ Text" },
+      { id: "mode_guided", title: "📋 Guided" },
+    ],
+    askVoice: "Please send a voice note describing what happened.",
+    askText: "Please describe what happened.",
     statusFound: (found) => `Case ${found.case_id}: status is "${found.status}".`,
     statusNotFound: "We couldn't find that case number for your phone number.",
     unsupportedMessage: "Sorry, I can only understand voice notes or text messages right now.",
+    guidedNeedsAnswer: "Please tap one of the options above, or type your answer.",
     genericError: "Something went wrong processing your report. Please try again.",
     fallbackFollowUp: "Could you give me a bit more detail about what happened?",
     askSuspectedNumber: "Do you have the phone number the fraudster used? If you don't know it, just reply \"unknown\".",
@@ -172,16 +190,88 @@ const TEXT = {
     restarted: "Okay, let's start over.",
   },
   tw: {
-    languageAck: "Ɛyɛ — yɛbɛkɔ so wɔ Twi mu.\n\nFa wo nne kyerɛ anaasɛ kyerɛw wo amanneɛbɔ, bere biara a wobɛpɛ.",
+    modeChoicePrompt:
+      "Ɛyɛ — yɛbɛkɔ so wɔ Twi mu.\n\nƐkwan bɛn na wopɛ sɛ wobɔ wo amanneɛ? (Anaasɛ fa wo nne kyerɛ anaasɛ kyerɛw wo amanneɛbɔ tee, bere biara a wobɛpɛ.)",
+    modeButtons: [
+      { id: "mode_voice", title: "🎤 Kasa" },
+      { id: "mode_text", title: "✍️ Kyerɛw" },
+      { id: "mode_guided", title: "📋 Nsɛmmisa" },
+    ],
+    askVoice: "Mesrɛ wo, fa wo nne kyerɛ deɛ ɛsii.",
+    askText: "Mesrɛ wo, kyerɛw deɛ ɛsii.",
     statusFound: (found) => `Case ${found.case_id}: gyinabea ne "${found.status}".`,
     statusNotFound: "Yɛanhu case a saa number no wɔ wo telefon number no ho.",
     unsupportedMessage: "Yɛpa wo kyɛw, mate wo nne anaa wo nkrasɛm nko ara.",
+    guidedNeedsAnswer: "Mesrɛ wo, paw nea ɛwɔ soro ha, anaasɛ kyerɛw wo mmuae.",
     genericError: "Biribi ankɔ yie wɔ wo amanneɛbɔ no ho adwuma mu. Yɛsrɛ wo, sɔ hwɛ bio.",
     fallbackFollowUp: "Wobɛtumi aka deɛ ɛsii no mu nsɛm bi akyerɛ me?",
     askSuspectedNumber: "Wowɔ telefon nɔma a nsisifoɔ no de yɛɛ eyi? Sɛ wonnim a, kyerɛw \"unknown\".",
     confirmation: (id) => `Meda wo ase. Wo case number ne ${id}. Yɛasie wo amanneɛbɔ no.`,
     restarted: "Ɛyɛ, momma yɛnhyɛ aseɛ bio.",
   },
+};
+
+// Guided mode's own questions (buttons for coarse choices, free text for
+// the rest). Answers get combined into one natural-language block and
+// submitted through the exact same runReportTurn() text/voice already
+// use — buildCase() extracts fraud_category etc. from that combined text,
+// same as it would from anything a customer typed directly.
+const GUIDED_QUESTIONS = {
+  en: [
+    {
+      key: "what",
+      prompt: "What happened?",
+      buttons: [
+        { id: "g_called", title: "Someone called me" },
+        { id: "g_message", title: "Someone messaged me" },
+        { id: "g_money_taken", title: "Money was taken" },
+      ],
+    },
+    {
+      key: "when",
+      prompt: "When did this happen?",
+      buttons: [
+        { id: "g_today", title: "Today" },
+        { id: "g_yesterday", title: "Yesterday" },
+        { id: "g_this_week", title: "This week" },
+      ],
+    },
+    { key: "amount", prompt: "How much money was involved? (e.g. 500)", buttons: null },
+  ],
+  tw: [
+    {
+      key: "what",
+      prompt: "Ɛdeɛn na ɛsii?",
+      buttons: [
+        { id: "g_called", title: "Obi frɛɛ me" },
+        { id: "g_message", title: "Obi soma me nkra" },
+        { id: "g_money_taken", title: "Wɔfaa sika" },
+      ],
+    },
+    {
+      key: "when",
+      prompt: "Da bɛn na ɛsii yi?",
+      buttons: [
+        { id: "g_today", title: "Ɛnnɛ" },
+        { id: "g_yesterday", title: "Ɛnnɛra" },
+        { id: "g_this_week", title: "Saa dapɛn yi" },
+      ],
+    },
+    { key: "amount", prompt: "Sika dodoɔ sɛn na ɛkɔɔ mu? (sɛ nhwɛso, 500)", buttons: null },
+  ],
+};
+
+// Turns a guided-flow button tap into the phrase combined into the report
+// text handed to buildCase() — always in English, matching llm.js's own
+// English-language extraction (see its system prompt), regardless of
+// which language the guided-mode buttons were shown in.
+const GUIDED_ANSWER_PHRASES = {
+  g_called: "Someone called me",
+  g_message: "Someone sent me a message",
+  g_money_taken: "Money was taken from my account",
+  g_today: "today",
+  g_yesterday: "yesterday",
+  g_this_week: "this week",
 };
 
 // The LLM's own follow_up_questions are always written in Twi (see
@@ -211,6 +301,57 @@ async function sendLanguageChoice(to) {
   ]);
 }
 
+async function sendModeChoice(to, lang) {
+  await sendWhatsAppButtons(to, TEXT[lang].modeChoicePrompt, TEXT[lang].modeButtons);
+}
+
+async function startGuidedFlow(to, lang) {
+  guidedFlowByCustomer.set(to, { step: 0, answers: {} });
+  const question = GUIDED_QUESTIONS[lang][0];
+  await sendWhatsAppButtons(to, question.prompt, question.buttons);
+}
+
+/** Handles one answer within an in-progress guided flow, for `from`. */
+async function handleGuidedAnswer(from, lang, message, typedText, buttonId) {
+  const t = TEXT[lang];
+  const state = guidedFlowByCustomer.get(from);
+  const questions = GUIDED_QUESTIONS[lang];
+  const question = questions[state.step];
+
+  // A button tap is preferred when it matches this question's own
+  // options, but typing an answer instead (bypassing the buttons) works
+  // too — same leniency as the rest of this file.
+  let answerPhrase;
+  if (buttonId && question.buttons?.some((b) => b.id === buttonId)) {
+    answerPhrase = GUIDED_ANSWER_PHRASES[buttonId] ?? buttonId;
+  } else if (message.type === "text" && typedText) {
+    answerPhrase = typedText;
+  } else {
+    await sendWhatsAppText(from, t.guidedNeedsAnswer);
+    return;
+  }
+
+  const answers = { ...state.answers, [question.key]: answerPhrase };
+  const nextStep = state.step + 1;
+
+  if (nextStep >= questions.length) {
+    guidedFlowByCustomer.delete(from);
+    // One natural-language block, same shape buildCase() already handles
+    // for a typed report — no separate extraction logic needed here.
+    const combinedText = `${answers.what}. This happened ${answers.when}. The amount involved was ${answers.amount}.`;
+    await runReportTurn({ from, text: combinedText, input_mode: "guided", lang });
+    return;
+  }
+
+  guidedFlowByCustomer.set(from, { step: nextStep, answers });
+  const nextQuestion = questions[nextStep];
+  if (nextQuestion.buttons) {
+    await sendWhatsAppButtons(from, nextQuestion.prompt, nextQuestion.buttons);
+  } else {
+    await sendWhatsAppText(from, nextQuestion.prompt);
+  }
+}
+
 /**
  * Main WhatsApp webhook handler. Meta POSTs here for every incoming message
  * (and other events, like delivery statuses, which we ignore).
@@ -230,13 +371,15 @@ export async function handleIncomingMessage(req, res) {
     if (buttonId === "lang_en" || buttonId === "lang_tw") {
       const lang = buttonId === "lang_tw" ? "tw" : "en";
       languageByCustomer.set(from, lang);
-      await sendWhatsAppText(from, TEXT[lang].languageAck);
+      await sendModeChoice(from, lang);
       return;
     }
 
     const typedText = message.type === "text" ? message.text.body.trim() : "";
     if (buttonId === "restart" || typedText.toLowerCase() === "restart") {
       languageByCustomer.delete(from);
+      guidedFlowByCustomer.delete(from);
+      pendingNumberFollowUp.delete(from);
       const lang = getLanguage(from, null) || "en";
       await sendWhatsAppText(from, TEXT[lang].restarted);
       await sendLanguageChoice(from);
@@ -250,6 +393,21 @@ export async function handleIncomingMessage(req, res) {
       return;
     }
     const t = TEXT[lang];
+
+    if (buttonId === "mode_voice" || buttonId === "mode_text") {
+      await sendWhatsAppText(from, buttonId === "mode_voice" ? t.askVoice : t.askText);
+      return;
+    }
+
+    if (buttonId === "mode_guided") {
+      await startGuidedFlow(from, lang);
+      return;
+    }
+
+    if (guidedFlowByCustomer.has(from)) {
+      await handleGuidedAnswer(from, lang, message, typedText, buttonId);
+      return;
+    }
 
     // Answering the "what's the suspect's number?" follow-up — this case is
     // otherwise already complete (missing_fields was already empty when we
