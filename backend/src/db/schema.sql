@@ -1,7 +1,11 @@
 CREATE TABLE IF NOT EXISTS cases (
   case_id TEXT PRIMARY KEY,
   customer_contact TEXT NOT NULL,
-  channel TEXT NOT NULL CHECK (channel IN ('whatsapp', 'ussd')),
+  -- 'mtn_app' isn't wired up by any of our own code yet — it exists so that
+  -- if MTN's own app calls POST /report directly (the same generic,
+  -- API-key-protected endpoint our WhatsApp/USSD channels already use),
+  -- it's treated as a first-class channel from day one, not a special case.
+  channel TEXT NOT NULL CHECK (channel IN ('whatsapp', 'ussd', 'mtn_app')),
   input_mode TEXT NOT NULL CHECK (input_mode IN ('voice', 'text', 'guided')),
   language TEXT NOT NULL DEFAULT 'twi',
   incident_summary TEXT,

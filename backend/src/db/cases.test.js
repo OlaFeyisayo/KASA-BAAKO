@@ -27,6 +27,28 @@ const EMPTY = {
   transaction_id: null,
 };
 
+test("createCase accepts 'mtn_app' as a channel (reserved for a future MTN-app integration, unused by our own code today) and rejects an unrecognized one", () => {
+  const merged = mergeCaseFields(EMPTY, { ...EMPTY, incident_summary: "test via mtn_app" });
+  const created = createCase({
+    customer_contact: "0244555000",
+    channel: "mtn_app",
+    input_mode: "text",
+    caseFields: merged.fields,
+    missing_fields: merged.missing_fields,
+  });
+  assert.equal(created.channel, "mtn_app");
+
+  assert.throws(() =>
+    createCase({
+      customer_contact: "0244555001",
+      channel: "sms",
+      input_mode: "text",
+      caseFields: merged.fields,
+      missing_fields: merged.missing_fields,
+    })
+  );
+});
+
 test("createCase stores an incomplete case and generates a non-sequential case_id", () => {
   const merged = mergeCaseFields(EMPTY, { incident_summary: "Someone called pretending to be MTN.", incident_date: null, amount: null, fraud_category: null, suspected_number: null, transaction_id: null });
   const created = createCase({
