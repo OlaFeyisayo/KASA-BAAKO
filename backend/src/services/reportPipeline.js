@@ -149,7 +149,13 @@ export async function processReport({ text, audioBuffer, contentType, customer_c
       // this point, so the customer should still get their case number even
       // without spoken audio, instead of a generic error hiding a real case.
       try {
-        confirmationAudio = await synthesizeSpeech(finalCase.incident_summary);
+        // Khaya defaults to WAV, which WhatsApp's media upload rejects
+        // outright ("(#100) Param file must be a file with one of the
+        // following types... audio/mpeg... Received file of type
+        // 'audio/wav'") — mp3 is in that allowed list, so request that
+        // instead. See channels/whatsapp.js's sendWhatsAppAudio, which
+        // uploads whatever format this produces.
+        confirmationAudio = await synthesizeSpeech(finalCase.incident_summary, { format: "mp3" });
       } catch (err) {
         console.error("[reportPipeline] TTS confirmation failed, continuing without audio:", err);
       }

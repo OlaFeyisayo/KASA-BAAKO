@@ -84,7 +84,9 @@ export async function sendWhatsAppButtons(to, bodyText, buttons) {
 export async function sendWhatsAppAudio(to, audioBuffer) {
   const form = new FormData();
   form.append("messaging_product", "whatsapp");
-  form.append("file", new Blob([audioBuffer], { type: "audio/wav" }), "confirmation.wav");
+  // Must match the format reportPipeline.js actually requests from Khaya
+  // (mp3) — WhatsApp's media upload rejects audio/wav outright.
+  form.append("file", new Blob([audioBuffer], { type: "audio/mpeg" }), "confirmation.mp3");
 
   const uploadResponse = await fetch(graphUrl(`${process.env.WHATSAPP_PHONE_NUMBER_ID}/media`), {
     method: "POST",
