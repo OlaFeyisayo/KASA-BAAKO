@@ -121,7 +121,14 @@ export async function processReport({ text, audioBuffer, contentType, customer_c
 
   let reportText = text;
   if (!reportText && audioBuffer) {
-    const transcription = await transcribeAudio(audioBuffer, { contentType });
+    // language was never passed here at all — every voice note (English
+    // or Twi) was being transcribed with Khaya's default "twi" ASR model
+    // regardless of what the customer actually spoke, unnoticed until now
+    // because it happens to match for Twi customers by coincidence.
+    const transcription = await transcribeAudio(audioBuffer, {
+      contentType,
+      language: language === "english" ? "eng" : "twi",
+    });
     reportText = transcription.text;
   }
 

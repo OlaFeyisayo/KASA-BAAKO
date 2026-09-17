@@ -17,7 +17,12 @@ const ASR_BASE_URL = "https://translation-api.ghananlp.org/asr/v3";
 // recording or a real outage hits the ceiling, and that failure recovers
 // gracefully (see channels/whatsapp.js's runReportTurn) instead of just
 // dying.
-const MIN_TIMEOUT_MS = 45000; // 45s floor — covers Khaya's base overhead even for a tiny clip
+// Confirmed by direct testing against the live API (same exact bytes, same
+// content-type, same language): a trivial request measured anywhere from
+// ~0.9s to ~35s. That's not correlated with anything we control — it's
+// real variance in Khaya's own backend — so the floor needs real margin
+// over the slow end of that range, not just "a bit more than a fast case".
+const MIN_TIMEOUT_MS = 60000; // 1 minute floor
 const MAX_TIMEOUT_MS = 240000; // 4 minutes — a real ceiling per attempt; see retry below
 const TIMEOUT_MS_PER_KB = 300; // generous: real cloud ASR processes far faster than this
 
@@ -33,7 +38,11 @@ export function computeTimeoutMs(audioBuffer) {
 // time and just wastes the customer's wait by retrying it.
 class AsrTimeoutError extends Error {}
 
-const MAX_ATTEMPTS = 2; // 1 initial + 1 retry
+// The measured 0.9s-35s variance above looks close to independent between
+// calls (repeating the identical request didn't reproduce the same
+// timing), so each retry has a real chance of landing on a fast response
+// rather than hitting the same slowness again — worth 2 retries, not just 1.
+const MAX_ATTEMPTS = 3; // 1 initial + 2 retries
 
 async function attemptTranscribe(audioBuffer, { language, contentType, timestamps, timeoutMs }) {
   const url = new URL(`${ASR_BASE_URL}/transcribe`);

@@ -24,7 +24,7 @@ function Filters({
           type="text"
           value={searchQuery}
           onChange={(e) => setSearchQuery(e.target.value)}
-          placeholder="e.g. FC-1001"
+          placeholder="e.g. KB-1001"
           className="border border-slate-300 dark:border-slate-600 dark:bg-slate-800 dark:text-slate-100 rounded-md px-3 py-2 text-sm bg-white w-full sm:w-48"
         />
       </div>

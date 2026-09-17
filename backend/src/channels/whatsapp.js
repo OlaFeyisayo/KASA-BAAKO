@@ -134,11 +134,20 @@ export async function downloadWhatsAppMedia(mediaId) {
 
   const fileResponse = await fetch(meta.url, { headers: authHeaders() });
   const arrayBuffer = await fileResponse.arrayBuffer();
-  // WhatsApp reports voice notes as "audio/ogg; codecs=opus" — Khaya's own
-  // asr.js docs only mention bare types (mp3/wav/flac/ogg), and the ASR API
-  // has rejected the full string with "invalid parameters" in practice, so
-  // the codec parameter is stripped before it's ever handed to asr.js.
-  const mimeType = (meta.mime_type || "").split(";")[0].trim();
+  // Pass WhatsApp's exact mime type through unchanged — including the
+  // "; codecs=opus" parameter. This used to be stripped, on the theory
+  // that Khaya's ASR API had rejected the full string with "invalid
+  // parameters" — but a live side-by-side test (same bytes, only the
+  // Content-Type header changed) showed the STRIPPED bare "audio/ogg"
+  // takes ~35s to process, while the FULL "audio/ogg; codecs=opus" takes
+  // well under a second: Khaya's backend appears to need that parameter
+  // to pick a fast decode path, and falls back to something far slower
+  // without it. The original "invalid parameters" error (which prompted
+  // the stripping in the first place) was almost certainly actually
+  // caused by a bad language code sent alongside it in that same fix,
+  // never isolated at the time — see toKhayaLanguageCode-equivalent
+  // handling in this file/reportPipeline.js.
+  const mimeType = meta.mime_type || "audio/ogg";
   return { buffer: Buffer.from(arrayBuffer), mimeType };
 }
 
@@ -190,6 +199,7 @@ const TEXT = {
     askSuspectedNumber: "Do you have the phone number the fraudster used? If you don't know it, just reply \"unknown\".",
     confirmation: (id) => `Thank you. Your case number is ${id}. We've recorded your report.`,
     restarted: "Okay, let's start over.",
+    restartButton: [{ id: "restart", title: "🔄 Restart" }],
   },
   tw: {
     modeChoicePrompt:
@@ -212,6 +222,7 @@ const TEXT = {
     askSuspectedNumber: "Wowɔ telefon nɔma a nsisifoɔ no de yɛɛ eyi? Sɛ wonnim a, kyerɛw \"unknown\".",
     confirmation: (id) => `Meda wo ase. Wo case number ne ${id}. Yɛasie wo amanneɛbɔ no.`,
     restarted: "Ɛyɛ, momma yɛnhyɛ aseɛ bio.",
+    restartButton: [{ id: "restart", title: "🔄 Hyɛ Aseɛ Bio" }],
   },
 };
 
@@ -269,10 +280,20 @@ const GUIDED_QUESTIONS = {
 // text handed to buildCase() — always in English, matching llm.js's own
 // English-language extraction (see its system prompt), regardless of
 // which language the guided-mode buttons were shown in.
+//
+// These are deliberately more specific than the button labels themselves
+// ("Someone called me" alone, not "pretending to be my bank") — confirmed
+// via direct testing against the real extraction API: the short/vague
+// version left fraud_category null or "Other" inconsistently (Claude has
+// too little to go on), while this phrasing reliably resolves to a real
+// category (Impersonation / Phishing / Mobile Money Fraud) every time.
+// Without this, guided mode would ask a redundant "what type of fraud
+// was this?" follow-up almost every time, despite the customer having
+// already told us via the button they tapped.
 const GUIDED_ANSWER_PHRASES = {
-  g_called: "Someone called me",
-  g_message: "Someone sent me a message",
-  g_money_taken: "Money was taken from my account",
+  g_called: "Someone called me pretending to be from my bank or MTN, impersonating them",
+  g_message: "Someone sent me a suspicious message or link trying to steal my information",
+  g_money_taken: "Money was taken from my mobile money account without my authorization",
   g_today: "today",
   g_yesterday: "yesterday",
   g_this_week: "this week",
@@ -296,6 +317,15 @@ export function nextFollowUpQuestion(missingFields, followUpQuestions, lang) {
   if (!nextField) return null;
   if (lang === "en") return FOLLOW_UP_QUESTIONS_EN[nextField] || followUpQuestions[nextField];
   return followUpQuestions[nextField];
+}
+
+// Every message that expects the customer to answer something (a
+// follow-up question, "describe what happened", an error they might feel
+// stuck on) carries a Restart button — otherwise handleIncomingMessage's
+// restart handling exists but is never actually reachable, since nothing
+// ever shows the customer that it's an option.
+async function sendWithRestart(to, lang, bodyText) {
+  await sendWhatsAppButtons(to, bodyText, TEXT[lang].restartButton);
 }
 
 async function sendLanguageChoice(to) {
@@ -331,7 +361,7 @@ async function handleGuidedAnswer(from, lang, message, typedText, buttonId) {
   } else if (message.type === "text" && typedText) {
     answerPhrase = typedText;
   } else {
-    await sendWhatsAppText(from, t.guidedNeedsAnswer);
+    await sendWithRestart(from, lang, t.guidedNeedsAnswer);
     return;
   }
 
@@ -352,7 +382,7 @@ async function handleGuidedAnswer(from, lang, message, typedText, buttonId) {
   if (nextQuestion.buttons) {
     await sendWhatsAppButtons(from, nextQuestion.prompt, nextQuestion.buttons);
   } else {
-    await sendWhatsAppText(from, nextQuestion.prompt);
+    await sendWithRestart(from, lang, nextQuestion.prompt);
   }
 }
 
@@ -399,7 +429,7 @@ export async function handleIncomingMessage(req, res) {
     const t = TEXT[lang];
 
     if (buttonId === "mode_voice" || buttonId === "mode_text") {
-      await sendWhatsAppText(from, buttonId === "mode_voice" ? t.askVoice : t.askText);
+      await sendWithRestart(from, lang, buttonId === "mode_voice" ? t.askVoice : t.askText);
       return;
     }
 
@@ -434,7 +464,7 @@ export async function handleIncomingMessage(req, res) {
         }
         return;
       }
-      await sendWhatsAppText(from, t.unsupportedMessage);
+      await sendWithRestart(from, lang, t.unsupportedMessage);
       return;
     }
 
@@ -457,11 +487,11 @@ export async function handleIncomingMessage(req, res) {
       return;
     }
 
-    await sendWhatsAppText(from, t.unsupportedMessage);
+    await sendWithRestart(from, lang, t.unsupportedMessage);
   } catch (err) {
     console.error("[whatsapp] handleIncomingMessage error:", err);
     const lang = getLanguage(from, null) || "en";
-    await sendWhatsAppText(from, TEXT[lang].genericError);
+    await sendWithRestart(from, lang, TEXT[lang].genericError);
   }
 }
 
@@ -470,9 +500,11 @@ async function runReportTurn({ from, text, audioBuffer, contentType, input_mode,
 
   // ASR's own timeout now scales up to several minutes for a long
   // recording (see asr.js) — without this, a customer watching a silent
-  // chat for that long would reasonably assume the bot is broken.
+  // chat for that long would reasonably assume the bot is broken. Carries
+  // a Restart button too, since a long wait is exactly when someone might
+  // want an escape hatch.
   if (input_mode === "voice") {
-    await sendWhatsAppText(from, t.processingVoice);
+    await sendWithRestart(from, lang, t.processingVoice);
   }
 
   // Locked so that two near-simultaneous messages from the same customer
@@ -493,16 +525,20 @@ async function runReportTurn({ from, text, audioBuffer, contentType, input_mode,
         case_id: targetCaseId,
         language: lang === "tw" ? "twi" : "english",
         audio_ref: audioRef,
+        // Customer explicitly asked not to receive a spoken readback of
+        // their report after getting a case number — this also saves a
+        // Khaya TTS call that would otherwise just be discarded unsent.
+        synthesizeConfirmation: false,
       });
     });
   } catch (err) {
-    // asr.js already retries a timeout once internally — this is the
-    // *second* failure, so retrying again here wouldn't help. Give the
-    // customer an actual way forward (their case, if one exists, is
-    // untouched — they can try again or switch to typing) instead of the
-    // generic error every other failure gets.
+    // asr.js already retries a timeout internally — this is the *final*
+    // failure after all of those, so retrying again here wouldn't help.
+    // Give the customer an actual way forward (their case, if one
+    // exists, is untouched — they can try again or switch to typing)
+    // instead of the generic error every other failure gets.
     if (input_mode === "voice" && /Khaya ASR request timed out/i.test(err.message)) {
-      await sendWhatsAppText(from, t.voiceTimedOut);
+      await sendWithRestart(from, lang, t.voiceTimedOut);
       return;
     }
     throw err;
@@ -510,7 +546,7 @@ async function runReportTurn({ from, text, audioBuffer, contentType, input_mode,
 
   if (result.missing_fields.length > 0) {
     const question = nextFollowUpQuestion(result.missing_fields, result.follow_up_questions, lang);
-    await sendWhatsAppText(from, question || t.fallbackFollowUp);
+    await sendWithRestart(from, lang, question || t.fallbackFollowUp);
     return;
   }
 
@@ -521,15 +557,12 @@ async function runReportTurn({ from, text, audioBuffer, contentType, input_mode,
   // so we don't loop asking it forever.
   if (!skipNumberFollowUp && !result.case.suspected_number) {
     pendingNumberFollowUp.set(from, result.case_id);
-    await sendWhatsAppText(from, t.askSuspectedNumber);
+    await sendWithRestart(from, lang, t.askSuspectedNumber);
     return;
   }
   pendingNumberFollowUp.delete(from);
 
   await sendWhatsAppText(from, t.confirmation(result.case_id));
-  if (result.confirmationAudio) {
-    await sendWhatsAppAudio(from, result.confirmationAudio);
-  }
 
   if (result.alert?.type === "individual") {
     for (const alertMessage of result.alert.messages) {

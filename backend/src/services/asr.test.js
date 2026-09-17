@@ -2,9 +2,9 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { transcribeAudio, computeTimeoutMs } from "./asr.js";
 
-test("computeTimeoutMs floors at 45s for a tiny clip", () => {
+test("computeTimeoutMs floors at 60s for a tiny clip", () => {
   const tiny = Buffer.alloc(1024); // 1KB
-  assert.equal(computeTimeoutMs(tiny), 45000);
+  assert.equal(computeTimeoutMs(tiny), 60000);
 });
 
 test("computeTimeoutMs caps at 4 minutes for a very large clip", () => {
@@ -13,16 +13,16 @@ test("computeTimeoutMs caps at 4 minutes for a very large clip", () => {
 });
 
 test("computeTimeoutMs scales between the floor and ceiling for a moderate clip", () => {
-  const moderate = Buffer.alloc(300 * 1024); // 300KB * 300ms/KB = 90000ms
-  const ms = computeTimeoutMs(moderate);
-  assert.ok(ms > 45000 && ms < 240000, `expected strictly between floor and ceiling, got ${ms}`);
+  const midSize = Buffer.alloc(700 * 1024); // 700KB * 300ms/KB = 210000ms
+  const ms = computeTimeoutMs(midSize);
+  assert.ok(ms > 60000 && ms < 240000, `expected strictly between floor and ceiling, got ${ms}`);
 });
 
-test("transcribeAudio retries once after a timeout, then succeeds", async (t) => {
+test("transcribeAudio retries after a timeout, then succeeds", async (t) => {
   let callCount = 0;
   t.mock.method(global, "fetch", async () => {
     callCount++;
-    if (callCount === 1) {
+    if (callCount < 2) {
       const err = new Error("aborted");
       err.name = "AbortError";
       throw err;
@@ -32,10 +32,10 @@ test("transcribeAudio retries once after a timeout, then succeeds", async (t) =>
 
   const result = await transcribeAudio(Buffer.from("fake audio"));
   assert.equal(result.text, "someone called me");
-  assert.equal(callCount, 2, "expected exactly one retry after the first timeout");
+  assert.equal(callCount, 2, "expected to succeed on the first retry");
 });
 
-test("transcribeAudio gives up after exhausting retries on repeated timeouts", async (t) => {
+test("transcribeAudio gives up after exhausting all retries on repeated timeouts", async (t) => {
   let callCount = 0;
   t.mock.method(global, "fetch", async () => {
     callCount++;
@@ -45,7 +45,7 @@ test("transcribeAudio gives up after exhausting retries on repeated timeouts", a
   });
 
   await assert.rejects(() => transcribeAudio(Buffer.from("fake audio")), /timed out/);
-  assert.equal(callCount, 2, "expected exactly 2 attempts (1 initial + 1 retry), not an infinite/unbounded loop");
+  assert.equal(callCount, 3, "expected exactly 3 attempts (1 initial + 2 retries), not an infinite/unbounded loop");
 });
 
 test("transcribeAudio does NOT retry a real API error — only a timeout is worth retrying", async (t) => {
