@@ -8,6 +8,29 @@ import { handleUssdRequest } from "./channels/ussd.js";
 import { login, logout, requireDashboardAuth, requireServiceApiKey, requireUssdWebhookToken } from "./services/auth.js";
 import { verifyWhatsAppSignature } from "./middleware/verifySignature.js";
 
+// Defense in depth: Node's default behavior for an unhandled promise
+// rejection is to crash the whole process. That's exactly what just
+// happened in production — a transient network failure reaching Meta's
+// API inside an async webhook handler went uncaught, and took down
+// WhatsApp, USSD, and the dashboard API together until someone manually
+// restarted the server. channels/whatsapp.js's send functions are now
+// fixed at the source (they catch their own network errors instead of
+// throwing), but this is a deliberate last-resort net for the same class
+// of bug anywhere else in the codebase, present or future: log it and
+// keep serving requests, rather than one bad promise silently ending the
+// whole service. (The usual advice — let an uncaught exception crash the
+// process, restart it under a supervisor — assumes something like that IS
+// in place; a stateless HTTP server with no shared mutable state between
+// requests has little to actually be "corrupted" by one request's error,
+// and for a customer-facing fraud-reporting bot, staying up outweighs
+// that risk here.)
+process.on("unhandledRejection", (reason) => {
+  console.error("[server] Unhandled promise rejection (server stays up):", reason);
+});
+process.on("uncaughtException", (err) => {
+  console.error("[server] Uncaught exception (server stays up):", err);
+});
+
 const app = express();
 app.use(cors({ origin: process.env.DASHBOARD_ORIGIN || "*" }));
 // The `verify` callback stashes the exact raw, unparsed body on req.rawBody

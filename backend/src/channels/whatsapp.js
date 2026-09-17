@@ -46,75 +46,100 @@ export function verifyWebhook(req, res) {
   res.sendStatus(403);
 }
 
-/** Sends a plain text WhatsApp message. */
+/**
+ * Sends a plain text WhatsApp message.
+ *
+ * Never throws — a network-level failure reaching Meta (DNS, a dead
+ * connection, a timeout — anything below the HTTP layer, as opposed to
+ * Meta responding with a non-ok status) used to propagate as a rejected
+ * promise. That's fatal by default in Node: an unhandled rejection
+ * crashes the whole process. This function is frequently called from
+ * error-handling code itself (e.g. handleIncomingMessage's catch block,
+ * reporting an earlier failure back to the customer) — so a transient
+ * network blip while trying to report a DIFFERENT transient network blip
+ * took down the entire backend, not just that one message. Every send
+ * function below has the same fix, for the same reason.
+ */
 export async function sendWhatsAppText(to, body) {
-  const response = await fetch(graphUrl(`${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`), {
-    method: "POST",
-    headers: { ...authHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({
-      messaging_product: "whatsapp",
-      to,
-      type: "text",
-      text: { body },
-    }),
-  });
-  if (!response.ok) {
-    console.error("[whatsapp] sendWhatsAppText failed:", await response.text());
+  try {
+    const response = await fetch(graphUrl(`${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`), {
+      method: "POST",
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to,
+        type: "text",
+        text: { body },
+      }),
+    });
+    if (!response.ok) {
+      console.error("[whatsapp] sendWhatsAppText failed:", await response.text());
+    }
+  } catch (err) {
+    console.error("[whatsapp] sendWhatsAppText network error (message not delivered):", err.message);
   }
 }
 
-/** Sends up to 3 tappable buttons (WhatsApp's limit for this message type). */
+/** Sends up to 3 tappable buttons (WhatsApp's limit for this message type). Never throws — see sendWhatsAppText. */
 export async function sendWhatsAppButtons(to, bodyText, buttons) {
-  const response = await fetch(graphUrl(`${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`), {
-    method: "POST",
-    headers: { ...authHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({
-      messaging_product: "whatsapp",
-      to,
-      type: "interactive",
-      interactive: {
-        type: "button",
-        body: { text: bodyText },
-        action: { buttons: buttons.map((b) => ({ type: "reply", reply: { id: b.id, title: b.title } })) },
-      },
-    }),
-  });
-  if (!response.ok) {
-    console.error("[whatsapp] sendWhatsAppButtons failed:", await response.text());
+  try {
+    const response = await fetch(graphUrl(`${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`), {
+      method: "POST",
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to,
+        type: "interactive",
+        interactive: {
+          type: "button",
+          body: { text: bodyText },
+          action: { buttons: buttons.map((b) => ({ type: "reply", reply: { id: b.id, title: b.title } })) },
+        },
+      }),
+    });
+    if (!response.ok) {
+      console.error("[whatsapp] sendWhatsAppButtons failed:", await response.text());
+    }
+  } catch (err) {
+    console.error("[whatsapp] sendWhatsAppButtons network error (message not delivered):", err.message);
   }
 }
 
-/** Uploads an audio buffer as WhatsApp media, then sends it to `to`. */
+/** Uploads an audio buffer as WhatsApp media, then sends it to `to`. Never throws — see sendWhatsAppText. */
 export async function sendWhatsAppAudio(to, audioBuffer) {
-  const form = new FormData();
-  form.append("messaging_product", "whatsapp");
-  // Must match the format reportPipeline.js actually requests from Khaya
-  // (mp3) — WhatsApp's media upload rejects audio/wav outright.
-  form.append("file", new Blob([audioBuffer], { type: "audio/mpeg" }), "confirmation.mp3");
+  try {
+    const form = new FormData();
+    form.append("messaging_product", "whatsapp");
+    // Must match the format reportPipeline.js actually requests from Khaya
+    // (mp3) — WhatsApp's media upload rejects audio/wav outright.
+    form.append("file", new Blob([audioBuffer], { type: "audio/mpeg" }), "confirmation.mp3");
 
-  const uploadResponse = await fetch(graphUrl(`${process.env.WHATSAPP_PHONE_NUMBER_ID}/media`), {
-    method: "POST",
-    headers: authHeaders(),
-    body: form,
-  });
-  const uploadData = await uploadResponse.json();
-  if (!uploadResponse.ok) {
-    console.error("[whatsapp] media upload failed:", uploadData);
-    return;
-  }
+    const uploadResponse = await fetch(graphUrl(`${process.env.WHATSAPP_PHONE_NUMBER_ID}/media`), {
+      method: "POST",
+      headers: authHeaders(),
+      body: form,
+    });
+    const uploadData = await uploadResponse.json();
+    if (!uploadResponse.ok) {
+      console.error("[whatsapp] media upload failed:", uploadData);
+      return;
+    }
 
-  const sendResponse = await fetch(graphUrl(`${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`), {
-    method: "POST",
-    headers: { ...authHeaders(), "Content-Type": "application/json" },
-    body: JSON.stringify({
-      messaging_product: "whatsapp",
-      to,
-      type: "audio",
-      audio: { id: uploadData.id },
-    }),
-  });
-  if (!sendResponse.ok) {
-    console.error("[whatsapp] sendWhatsAppAudio failed:", await sendResponse.text());
+    const sendResponse = await fetch(graphUrl(`${process.env.WHATSAPP_PHONE_NUMBER_ID}/messages`), {
+      method: "POST",
+      headers: { ...authHeaders(), "Content-Type": "application/json" },
+      body: JSON.stringify({
+        messaging_product: "whatsapp",
+        to,
+        type: "audio",
+        audio: { id: uploadData.id },
+      }),
+    });
+    if (!sendResponse.ok) {
+      console.error("[whatsapp] sendWhatsAppAudio failed:", await sendResponse.text());
+    }
+  } catch (err) {
+    console.error("[whatsapp] sendWhatsAppAudio network error (audio not delivered):", err.message);
   }
 }
 
