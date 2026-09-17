@@ -1,6 +1,29 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { nextFollowUpQuestion, sendWhatsAppText, sendWhatsAppButtons, sendWhatsAppAudio } from "./whatsapp.js";
+import { nextFollowUpQuestion, sendWhatsAppText, sendWhatsAppButtons, sendWhatsAppAudio, isDuplicateMessage } from "./whatsapp.js";
+
+// Found in production: a "restart" fired with no message from the
+// customer, ~13 minutes after they'd already received a case number.
+// Meta retries a webhook delivery that never got a 200 response back in
+// time (e.g. during the server crash fixed separately) — the retry
+// resends the EXACT same message, which without this looked like a
+// brand new incoming command and got reprocessed. A message id must
+// only ever be actionable once.
+test("isDuplicateMessage lets a genuinely new message id through", () => {
+  assert.equal(isDuplicateMessage("wamid.UNIQUE_TEST_ID_1"), false);
+});
+
+test("isDuplicateMessage flags the same message id as a duplicate the second time", () => {
+  const id = "wamid.UNIQUE_TEST_ID_2";
+  assert.equal(isDuplicateMessage(id), false, "first time should not be a duplicate");
+  assert.equal(isDuplicateMessage(id), true, "second time (a Meta retry replaying the same message) must be flagged");
+  assert.equal(isDuplicateMessage(id), true, "a third replay must also still be flagged, not just the first retry");
+});
+
+test("isDuplicateMessage treats different message ids as independent", () => {
+  assert.equal(isDuplicateMessage("wamid.UNIQUE_TEST_ID_3"), false);
+  assert.equal(isDuplicateMessage("wamid.UNIQUE_TEST_ID_4"), false);
+});
 
 // Found in production: a transient network failure reaching Meta's API
 // (a connection timeout, not Meta responding with an error) went

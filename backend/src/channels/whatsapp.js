@@ -195,6 +195,29 @@ const pendingNumberFollowUp = new Map();
 // just starts over, which is fine.
 const guidedFlowByCustomer = new Map();
 
+// Meta retries a webhook delivery if it never gets a 200 response back in
+// time — every retry resends the EXACT same message. This normally isn't
+// visible, but if the server was ever briefly unreachable (a crash, a
+// deploy, the network issue fixed earlier), a retry can land minutes
+// later on a now-working server and get reprocessed as if it just
+// arrived — a stray "restart" firing with no message from the customer
+// is exactly this: an old retried command replaying after they'd already
+// moved on. Tracks message ids we've already handled (id -> first-seen
+// timestamp) so a replay is silently ignored instead of reprocessed;
+// cleaned up after MESSAGE_ID_TTL_MS so this doesn't grow forever.
+const processedMessageIds = new Map();
+const MESSAGE_ID_TTL_MS = 24 * 60 * 60 * 1000; // 24h — generous vs. Meta's own retry window
+
+export function isDuplicateMessage(messageId) {
+  const now = Date.now();
+  for (const [id, seenAt] of processedMessageIds) {
+    if (now - seenAt > MESSAGE_ID_TTL_MS) processedMessageIds.delete(id);
+  }
+  if (processedMessageIds.has(messageId)) return true;
+  processedMessageIds.set(messageId, now);
+  return false;
+}
+
 function getLanguage(from, openCase) {
   if (languageByCustomer.has(from)) return languageByCustomer.get(from);
   if (openCase?.language === "twi") return "tw";
@@ -420,6 +443,11 @@ export async function handleIncomingMessage(req, res) {
 
   const message = req.body?.entry?.[0]?.changes?.[0]?.value?.messages?.[0];
   if (!message) return; // not an incoming message (e.g. a status update)
+
+  if (message.id && isDuplicateMessage(message.id)) {
+    console.log("[whatsapp] Ignoring a retried/duplicate webhook for message", message.id);
+    return;
+  }
 
   const from = message.from;
   const buttonId = message.type === "interactive" ? message.interactive?.button_reply?.id : null;
