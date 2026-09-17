@@ -1,4 +1,5 @@
 import "dotenv/config";
+import { setDefaultResultOrder } from "node:dns";
 import express from "express";
 import cors from "cors";
 import { processReport } from "./services/reportPipeline.js";
@@ -30,6 +31,19 @@ process.on("unhandledRejection", (reason) => {
 process.on("uncaughtException", (err) => {
   console.error("[server] Uncaught exception (server stays up):", err);
 });
+
+// Diagnosed directly: DNS returns both an IPv6 and an IPv4 address for
+// graph.facebook.com, IPv4 connects instantly, and IPv6 doesn't connect
+// at all on this network (a working IPv6 address in DNS with no actual
+// IPv6 route is a common real-world ISP/router misconfiguration). Node's
+// fetch (via undici) tries IPv6 first by default and — unlike curl, which
+// falls back fast — waits out the full connect timeout on the dead path
+// before giving up, so every outbound call to Meta's API (and Khaya's,
+// Anthropic's — anywhere DNS returns an IPv6 record) was paying that
+// ~10s tax or failing outright, with no relation to actual bandwidth.
+// This forces Node to resolve IPv4 first for the whole process, which
+// sidesteps the broken path entirely rather than just tolerating it.
+setDefaultResultOrder("ipv4first");
 
 const app = express();
 app.use(cors({ origin: process.env.DASHBOARD_ORIGIN || "*" }));
