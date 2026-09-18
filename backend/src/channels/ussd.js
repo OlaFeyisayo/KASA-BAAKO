@@ -65,6 +65,13 @@ const TEXT = {
     amount: "How much money was involved? (Enter 0 if unknown):",
     date: "When did this happen? (e.g. 2026-09-10 or 'today'):",
     number: "What is the suspect's phone number? (Enter 0 if unknown):",
+    // Asked instead of `number` for a Phishing-category case — see the
+    // matching WhatsApp follow-up in channels/whatsapp.js for why: a
+    // phishing scam is normally identified by the sender's email or a
+    // link, not a phone number. Phrased as a condition ("if by email")
+    // rather than assuming email, since this category also covers scams
+    // by phone call, SMS, or WhatsApp.
+    email: "If they contacted you by email, what was their email address? (Enter 0 if not by email):",
     description: "Tell us more in your own words:",
     final: (id) => `Thank you. Your case number is ${id}. Keep it to check your case status later.`,
     incomplete: (id) => `Your report was saved as ${id}. An MTN agent may follow up for a few more details.`,
@@ -72,6 +79,7 @@ const TEXT = {
     errInvalidAmount: "Invalid amount.",
     errInvalidDate: "Invalid date.",
     errInvalidNumber: "Invalid entry.",
+    errInvalidEmail: "Invalid entry.",
     errInvalidDescription: "Please describe what happened.",
     errTooMany: "Too many inputs.",
     errGeneric: "Something went wrong processing your report. Please try again later.",
@@ -81,6 +89,9 @@ const TEXT = {
     amount: "Sika dodow sɛn na ɛkɔɔ mu? (Sɛ wunnim a, kyerɛw 0):",
     date: "Da bɛn na eyi sii? (Sɛnkyerɛnne: 2026-09-10 anaa 'ɛnnɛ'):",
     number: "Nsisifoɔ no telefon nɔma ne sɛn? (Sɛ wunnim a, kyerɛw 0):",
+    // Best-effort Twi phrasing — worth a native-speaker review, like the
+    // rest of this file's Twi text.
+    email: "Sɛ wɔfaa email so ne wo dii dwuma a, wɔn email address ne sɛn? (Sɛ ɛnyɛ email so a, kyerɛw 0):",
     description: "Ka nea esii no kyerɛ yɛn wɔ w'ankasa asɛm mu:",
     final: (id) => `Meda wo ase. Wo asɛm nɔma ne ${id}. Fa sie na wode bɛhwehwɛ wo asɛm tebea.`,
     incomplete: (id) => `Yɛasie wo amaneɛ sɛ ${id}. MTN adwumayɛni bɛtumi abisa wo nsɛm bi bio.`,
@@ -88,6 +99,7 @@ const TEXT = {
     errInvalidAmount: "Sika dodow a wokyerɛɛ no nyɛ deɛ ɛfata.",
     errInvalidDate: "Da a wokyerɛɛ no nyɛ deɛ ɛfata.",
     errInvalidNumber: "Deɛ wode hyɛɛ mu no nyɛ deɛ ɛfata.",
+    errInvalidEmail: "Deɛ wode hyɛɛ mu no nyɛ deɛ ɛfata.",
     errInvalidDescription: "Yɛsrɛ wo, ka deɛ esii no.",
     errTooMany: "Wode nsɛm dodoɔ bi hyɛɛ mu dodo.",
     errGeneric: "Biribi ankɔ yie. Yɛsrɛ wo, sɔ hwɛ bio akyire yi.",
@@ -145,6 +157,12 @@ export async function handleUssdRequest(req, res) {
     if (!Number.isInteger(categoryIndex) || categoryIndex < 1 || categoryIndex > CATEGORY_VALUES.length) {
       return res.send(`END ${t.errInvalidCategory(CATEGORY_VALUES.length)} ${t.restartSuffix}`);
     }
+    const category = CATEGORY_VALUES[categoryIndex - 1];
+    // A Phishing case is normally identified by the sender's email (or a
+    // link), not a phone number — same reasoning as the matching WhatsApp
+    // follow-up in channels/whatsapp.js. Asked at the same step number as
+    // the phone-number question below, just with different text.
+    const isPhishing = category === "Phishing";
     if (steps.length === 2) {
       return res.send(`CON ${t.amount}`);
     }
@@ -162,12 +180,12 @@ export async function handleUssdRequest(req, res) {
       return res.send(`END ${t.errInvalidDate} ${t.restartSuffix}`);
     }
     if (steps.length === 4) {
-      return res.send(`CON ${t.number}`);
+      return res.send(`CON ${isPhishing ? t.email : t.number}`);
     }
 
-    const suspectedNumberRaw = steps[4].trim();
-    if (!suspectedNumberRaw) {
-      return res.send(`END ${t.errInvalidNumber} ${t.restartSuffix}`);
+    const suspectedContactRaw = steps[4].trim();
+    if (!suspectedContactRaw) {
+      return res.send(`END ${isPhishing ? t.errInvalidEmail : t.errInvalidNumber} ${t.restartSuffix}`);
     }
     if (steps.length === 5) {
       return res.send(`CON ${t.description}`);
@@ -181,14 +199,13 @@ export async function handleUssdRequest(req, res) {
       return res.send(`END ${t.errTooMany} ${t.restartSuffix}`);
     }
 
-    const category = CATEGORY_VALUES[categoryIndex - 1];
-    const suspectedNumber = suspectedNumberRaw === "0" ? null : suspectedNumberRaw;
+    const suspectedContact = suspectedContactRaw === "0" ? null : suspectedContactRaw;
 
     const reportText = [
       `Fraud type: ${category}.`,
       `Amount: GHS ${amount}.`,
       `Date: ${incidentDate}.`,
-      suspectedNumber ? `Suspected number: ${suspectedNumber}.` : null,
+      suspectedContact ? `${isPhishing ? "Suspected email" : "Suspected number"}: ${suspectedContact}.` : null,
       `Details: ${description}`,
     ]
       .filter(Boolean)
