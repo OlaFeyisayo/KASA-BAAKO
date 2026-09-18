@@ -1,5 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
-import { fetchCases, updateCaseStatus, logout as apiLogout } from './api'
+import { onAuthStateChanged, signOut } from 'firebase/auth'
+import { auth } from './firebase'
+import { fetchCases, updateCaseStatus } from './api'
 import Login from './components/Login'
 import Sidebar from './components/Sidebar'
 import TopBar from './components/TopBar'
@@ -9,27 +11,13 @@ import CasesTable from './components/CasesTable'
 import CaseDetailsModal from './components/CaseDetailsModal'
 import { FileText, Inbox, Eye, CheckCircle2 } from 'lucide-react'
 
-const TOKEN_STORAGE_KEY = 'kasabaako_dashboard_token'
-
-function readStoredToken() {
-  try {
-    return sessionStorage.getItem(TOKEN_STORAGE_KEY)
-  } catch {
-    return null
-  }
-}
-
-function storeToken(token) {
-  try {
-    if (token) sessionStorage.setItem(TOKEN_STORAGE_KEY, token)
-    else sessionStorage.removeItem(TOKEN_STORAGE_KEY)
-  } catch {
-    // Not persisted across a refresh, but the session still works for this tab load.
-  }
-}
-
 function App() {
-  const [token, setToken] = useState(readStoredToken)
+  // Firebase manages the actual sign-in state; `token` is just the current
+  // ID token, re-read whenever that state changes, and attached to every
+  // API call below as a Bearer header — the backend never sees Firebase
+  // itself, just this token.
+  const [authLoading, setAuthLoading] = useState(true)
+  const [token, setToken] = useState(null)
   const [darkMode, setDarkMode] = useState(false)
   const [cases, setCases] = useState([])
   const [loading, setLoading] = useState(false)
@@ -45,9 +33,28 @@ function App() {
   }, [darkMode])
 
   const handleSessionExpired = useCallback(() => {
-    storeToken(null)
-    setToken(null)
+    signOut(auth).catch(() => {})
     setCases([])
+  }, [])
+
+  // Firebase's own listener is the single source of truth for "are we
+  // logged in" — on sign-in (including a page refresh, where Firebase
+  // restores the session from its own storage) we fetch a fresh ID token;
+  // on sign-out we clear it.
+  useEffect(() => {
+    const unsubscribe = onAuthStateChanged(auth, async (firebaseUser) => {
+      if (firebaseUser) {
+        try {
+          setToken(await firebaseUser.getIdToken())
+        } catch {
+          setToken(null)
+        }
+      } else {
+        setToken(null)
+      }
+      setAuthLoading(false)
+    })
+    return unsubscribe
   }, [])
 
   const loadCases = useCallback(async (activeToken, { silent = false } = {}) => {
@@ -82,22 +89,14 @@ function App() {
     return () => clearInterval(interval)
   }, [token, loadCases])
 
+  if (authLoading) return null
+
   if (!token) {
-    return (
-      <Login
-        darkMode={darkMode}
-        setDarkMode={setDarkMode}
-        onLogin={(newToken) => {
-          storeToken(newToken)
-          setToken(newToken)
-        }}
-      />
-    )
+    return <Login darkMode={darkMode} setDarkMode={setDarkMode} />
   }
 
   async function handleLogout() {
-    await apiLogout(token)
-    handleSessionExpired()
+    await signOut(auth)
   }
 
   const totalCases = cases.length

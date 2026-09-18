@@ -1,8 +1,10 @@
 import { useState } from 'react'
-import { login } from '../api'
-import { Lock, Eye, EyeOff, MessageCircle, Smartphone, Sparkles, Sun, Moon, ShieldAlert } from 'lucide-react'
+import { signInWithEmailAndPassword } from 'firebase/auth'
+import { auth } from '../firebase'
+import { Lock, Mail, Eye, EyeOff, MessageCircle, Smartphone, Sparkles, Sun, Moon, ShieldAlert } from 'lucide-react'
 
-function Login({ onLogin, darkMode, setDarkMode }) {
+function Login({ darkMode, setDarkMode }) {
+  const [email, setEmail] = useState('')
   const [password, setPassword] = useState('')
   const [showPassword, setShowPassword] = useState(false)
   const [error, setError] = useState('')
@@ -13,14 +15,11 @@ function Login({ onLogin, darkMode, setDarkMode }) {
     setError('')
     setLoading(true)
     try {
-      const token = await login(password)
-      if (!token) {
-        setError('Incorrect password. Please try again.')
-        return
-      }
-      onLogin(token)
+      // App.jsx's onAuthStateChanged listener picks up the signed-in user
+      // from here automatically — no token to hand back ourselves.
+      await signInWithEmailAndPassword(auth, email, password)
     } catch {
-      setError('Could not reach the server. Please check your connection and try again.')
+      setError('Incorrect email or password. Please try again.')
     } finally {
       setLoading(false)
     }
@@ -89,6 +88,23 @@ function Login({ onLogin, darkMode, setDarkMode }) {
               Access the KasaBaako fraud reporting system to manage and resolve cases.
             </p>
 
+            <label htmlFor="login-email" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
+              Staff Email
+            </label>
+            <div className="relative mb-3">
+              <Mail size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
+              <input
+                id="login-email"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@mtn.example"
+                required
+                autoFocus
+                className="w-full border border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:text-white rounded-lg pl-10 pr-3 py-2.5 text-sm"
+              />
+            </div>
+
             <label htmlFor="login-password" className="block text-sm font-medium text-slate-700 dark:text-slate-300 mb-1">
               Staff Password
             </label>
@@ -99,9 +115,8 @@ function Login({ onLogin, darkMode, setDarkMode }) {
                 type={showPassword ? 'text' : 'password'}
                 value={password}
                 onChange={(e) => setPassword(e.target.value)}
-                placeholder="Enter shared staff password"
+                placeholder="Enter your password"
                 required
-                autoFocus
                 className="w-full border border-slate-300 dark:border-slate-700 dark:bg-slate-900 dark:text-white rounded-lg pl-10 pr-10 py-2.5 text-sm"
               />
               <button

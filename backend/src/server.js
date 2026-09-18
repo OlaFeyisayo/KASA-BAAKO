@@ -110,28 +110,16 @@ app.post(
   }
 );
 
-// Dashboard login — a single shared MTN-staff password, checked here
-// (not in the shipped frontend JS, unlike the old client-side check) and
-// exchanged for a session token used as a Bearer token on every
-// dashboard-only route below.
-app.post("/auth/login", (req, res) => {
-  const token = login(req.body?.password);
-  if (!token) {
-    return res.status(401).json({ error: "Invalid password" });
-  }
-  res.json({ token });
-});
-
-app.post("/auth/logout", requireDashboardAuth, (req, res) => {
-  const token = req.headers.authorization.slice(7);
-  logout(token);
-  res.json({ ok: true });
-});
+// Dashboard login now happens on the frontend directly against Firebase
+// (email/password sign-in via the Firebase client SDK) — there's no
+// server-side login/logout route any more. Every dashboard-only route
+// below instead requires a Firebase ID token: "Authorization: Bearer
+// <idToken>", verified by requireFirebaseAuth.
 
 // For the MTN dashboard: every stored case. Dashboard-only — this is the
 // most sensitive endpoint in the system (every customer's fraud report in
 // one response), so it requires a valid dashboard session.
-app.get("/cases", requireDashboardAuth, (req, res) => {
+app.get("/cases", requireFirebaseAuth, (req, res) => {
   res.json(getAllCases());
 });
 
@@ -159,7 +147,7 @@ app.get("/cases/:caseId", (req, res) => {
 // download URL it hands out expires quickly, so this proxies through our
 // own server rather than the dashboard hitting Meta directly.
 // Dashboard-only, same sensitivity reasoning as GET /cases.
-app.get("/cases/:caseId/audio/:index", requireDashboardAuth, async (req, res) => {
+app.get("/cases/:caseId/audio/:index", requireFirebaseAuth, async (req, res) => {
   const found = getCaseById(req.params.caseId);
   const index = Number(req.params.index);
   const mediaId = found?.audio_refs?.[index];
@@ -178,7 +166,7 @@ app.get("/cases/:caseId/audio/:index", requireDashboardAuth, async (req, res) =>
 });
 
 // For the MTN dashboard: change a case's status.
-app.patch("/cases/:caseId/status", requireDashboardAuth, (req, res) => {
+app.patch("/cases/:caseId/status", requireFirebaseAuth, (req, res) => {
   try {
     const updated = updateCaseStatus(req.params.caseId, req.body?.status);
     res.json(updated);

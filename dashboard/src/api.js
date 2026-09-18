@@ -1,26 +1,8 @@
 const API_BASE = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'
 
-export async function login(password) {
-  const res = await fetch(`${API_BASE}/auth/login`, {
-    method: 'POST',
-    headers: { 'content-type': 'application/json' },
-    body: JSON.stringify({ password }),
-  })
-  if (!res.ok) return null
-  const { token } = await res.json()
-  return token
-}
-
-export async function logout(token) {
-  try {
-    await fetch(`${API_BASE}/auth/logout`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-    })
-  } catch {
-    // Best-effort — the local session is cleared either way.
-  }
-}
+// Login/logout now happen directly against Firebase (see firebase.js and
+// Login.jsx) — the backend only ever sees the resulting ID token as a
+// Bearer header, same as every call below.
 
 export async function fetchCases(token) {
   const res = await fetch(`${API_BASE}/cases`, {
