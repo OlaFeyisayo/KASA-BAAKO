@@ -6,7 +6,8 @@ import { processReport } from "./services/reportPipeline.js";
 import { getCaseForCustomer, getCaseById, updateCaseStatus, getAllCases } from "./db/cases.js";
 import { verifyWebhook, handleIncomingMessage, downloadWhatsAppMedia } from "./channels/whatsapp.js";
 import { handleUssdRequest } from "./channels/ussd.js";
-import { login, logout, requireDashboardAuth, requireServiceApiKey, requireUssdWebhookToken } from "./services/auth.js";
+import { requireServiceApiKey, requireUssdWebhookToken } from "./services/auth.js";
+import { requireFirebaseAuth } from "./middleware/requireFirebaseAuth.js";
 import { verifyWhatsAppSignature } from "./middleware/verifySignature.js";
 
 // Defense in depth: Node's default behavior for an unhandled promise
