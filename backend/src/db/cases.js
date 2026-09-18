@@ -13,6 +13,7 @@
 import { db } from "./connection.js";
 import { generateCaseId } from "../utils/caseId.js";
 import { normalizePhoneNumber } from "../utils/phone.js";
+import { normalizeEmail } from "../utils/email.js";
 import { REQUIRED_FIELDS } from "../services/llm.js";
 
 const VALID_STATUSES = ["received", "under_review", "resolved"];
@@ -23,6 +24,7 @@ function toRow(caseObj) {
     missing_fields: JSON.stringify(caseObj.missing_fields ?? []),
     audio_refs: JSON.stringify(caseObj.audio_refs ?? []),
     suspected_number_normalized: caseObj.suspected_number ? normalizePhoneNumber(caseObj.suspected_number) : null,
+    suspected_email_normalized: caseObj.suspected_email ? normalizeEmail(caseObj.suspected_email) : null,
   };
 }
 
@@ -53,11 +55,13 @@ function fromRow(row) {
 const INSERT_CASE_SQL = `INSERT INTO cases (
   case_id, customer_contact, channel, input_mode, language,
   incident_summary, incident_date, amount, fraud_category,
-  suspected_number, suspected_number_normalized, transaction_id, missing_fields, status, audio_refs
+  suspected_number, suspected_number_normalized, suspected_email, suspected_email_normalized,
+  transaction_id, missing_fields, status, audio_refs
 ) VALUES (
   @case_id, @customer_contact, @channel, @input_mode, @language,
   @incident_summary, @incident_date, @amount, @fraud_category,
-  @suspected_number, @suspected_number_normalized, @transaction_id, @missing_fields, @status, @audio_refs
+  @suspected_number, @suspected_number_normalized, @suspected_email, @suspected_email_normalized,
+  @transaction_id, @missing_fields, @status, @audio_refs
 )`;
 
 const MAX_CASE_ID_ATTEMPTS = 5;
@@ -113,7 +117,7 @@ export function createCase({
  */
 export function mergeCaseFields(existing, incoming) {
   const fields = {};
-  for (const field of ["incident_summary", "incident_date", "amount", "fraud_category", "suspected_number", "transaction_id"]) {
+  for (const field of ["incident_summary", "incident_date", "amount", "fraud_category", "suspected_number", "suspected_email", "transaction_id"]) {
     fields[field] = existing[field] ?? incoming[field] ?? null;
   }
   const missing_fields = REQUIRED_FIELDS.filter((field) => fields[field] === null || fields[field] === undefined);
@@ -131,26 +135,51 @@ export function mergeCaseFields(existing, incoming) {
  *   every voice note sent across the conversation is kept, not just the
  *   most recent one. Omit (or pass null/undefined) if this turn was text,
  *   so a typed follow-up answer doesn't add a phantom entry.
+ * @param {string} [language] - This turn's language ("twi"|"english"). Used
+ *   to keep the case's stored language current: a case created while
+ *   incomplete (e.g. the customer went quiet mid-report) keeps whatever
+ *   language was active at creation forever unless later turns update it
+ *   here — previously they didn't, so a case started in Twi but finished in
+ *   English (or vice versa) permanently showed the wrong language on the
+ *   dashboard. Falls back to the case's existing language if omitted.
+ * @param {"voice"|"text"|"guided"} [inputMode] - This turn's input mode.
+ *   Same reasoning/fallback as `language` above — a customer can (and does)
+ *   switch between typing and voice notes turn-to-turn on the same case, so
+ *   freezing this at whatever the very first turn happened to be gave a
+ *   misleading picture (e.g. a case answered mostly by voice note but
+ *   showing "text" because a short first message happened to be typed).
+ *   Reflects the most recent turn rather than the first.
  * @returns {object} The updated case.
  */
-export function updateCaseFields(caseId, fields, missingFields, audioRef) {
+export function updateCaseFields(caseId, fields, missingFields, audioRef, language, inputMode) {
   const existing = fromRow(db.prepare("SELECT * FROM cases WHERE case_id = ?").get(caseId));
   const audio_refs = audioRef ? [...(existing?.audio_refs ?? []), audioRef] : (existing?.audio_refs ?? []);
 
   db.prepare(
     `UPDATE cases SET
+      language = @language,
+      input_mode = @input_mode,
       incident_summary = @incident_summary,
       incident_date = @incident_date,
       amount = @amount,
       fraud_category = @fraud_category,
       suspected_number = @suspected_number,
       suspected_number_normalized = @suspected_number_normalized,
+      suspected_email = @suspected_email,
+      suspected_email_normalized = @suspected_email_normalized,
       transaction_id = @transaction_id,
       missing_fields = @missing_fields,
       audio_refs = @audio_refs,
       updated_at = datetime('now')
     WHERE case_id = @case_id`
-  ).run(toRow({ case_id: caseId, ...fields, missing_fields: missingFields, audio_refs }));
+  ).run(toRow({
+    case_id: caseId,
+    language: language ?? existing?.language,
+    input_mode: inputMode ?? existing?.input_mode,
+    ...fields,
+    missing_fields: missingFields,
+    audio_refs,
+  }));
 
   return fromRow(db.prepare("SELECT * FROM cases WHERE case_id = ?").get(caseId));
 }
@@ -229,6 +258,23 @@ export function getCasesBySuspectedNumber(normalizedNumber, excludeCaseId) {
   return db
     .prepare("SELECT * FROM cases WHERE suspected_number_normalized = ? AND case_id != ?")
     .all(normalizedNumber, excludeCaseId)
+    .map(fromRow);
+}
+
+/**
+ * Same as getCasesBySuspectedNumber, but for the suspected phishing sender's
+ * email address — used by alerts.js to also catch a repeat scammer identified
+ * by email rather than (or in addition to) a phone number.
+ *
+ * @param {string} normalizedEmail - Already-normalized (see utils/email.js).
+ * @param {string} excludeCaseId
+ * @returns {object[]}
+ */
+export function getCasesBySuspectedEmail(normalizedEmail, excludeCaseId) {
+  if (!normalizedEmail) return [];
+  return db
+    .prepare("SELECT * FROM cases WHERE suspected_email_normalized = ? AND case_id != ?")
+    .all(normalizedEmail, excludeCaseId)
     .map(fromRow);
 }
 

@@ -14,6 +14,11 @@ CREATE TABLE IF NOT EXISTS cases (
   fraud_category TEXT,
   suspected_number TEXT,
   suspected_number_normalized TEXT,
+  -- Suspected phishing sender's email address (e.g. a fake "MTN support"
+  -- address) — same optional/normalized-for-matching pattern as
+  -- suspected_number above, just for email-based fraud instead of phone-based.
+  suspected_email TEXT,
+  suspected_email_normalized TEXT,
   transaction_id TEXT,
   missing_fields TEXT,
   status TEXT NOT NULL DEFAULT 'received' CHECK (status IN ('received', 'under_review', 'resolved')),
@@ -32,6 +37,7 @@ CREATE TABLE IF NOT EXISTS cases (
 -- of loading every case into Node just to compare formats in JavaScript.
 CREATE INDEX IF NOT EXISTS idx_cases_suspected_number ON cases (suspected_number);
 CREATE INDEX IF NOT EXISTS idx_cases_suspected_number_normalized ON cases (suspected_number_normalized);
+CREATE INDEX IF NOT EXISTS idx_cases_suspected_email_normalized ON cases (suspected_email_normalized);
 CREATE INDEX IF NOT EXISTS idx_cases_status ON cases (status);
 
 -- Dashboard login sessions. Stored here (not an in-memory Map) so staff

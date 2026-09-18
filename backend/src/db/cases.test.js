@@ -96,6 +96,59 @@ test("updateCaseFields completes a case and it's retrievable by the right custom
   assert.equal(updated.amount, 200);
 });
 
+test("updateCaseFields updates language when a later turn's language differs from the case's original one", () => {
+  const merged1 = mergeCaseFields(EMPTY, { ...EMPTY, incident_summary: "Started in Twi" });
+  const created = createCase({
+    customer_contact: "0244000222",
+    channel: "whatsapp",
+    input_mode: "text",
+    language: "twi",
+    caseFields: merged1.fields,
+    missing_fields: merged1.missing_fields,
+  });
+  assert.equal(created.language, "twi");
+
+  // Customer came back later and finished the same (still-open) case in English.
+  const merged2 = mergeCaseFields(created, { incident_date: "2026-09-05", amount: 200, fraud_category: "Mobile Money Fraud" });
+  const updated = updateCaseFields(created.case_id, merged2.fields, merged2.missing_fields, undefined, "english");
+
+  assert.equal(updated.language, "english");
+});
+
+test("updateCaseFields preserves the existing language when no language is passed for this turn", () => {
+  const merged1 = mergeCaseFields(EMPTY, { ...EMPTY, incident_summary: "Started in Twi" });
+  const created = createCase({
+    customer_contact: "0244000333",
+    channel: "ussd",
+    input_mode: "guided",
+    language: "twi",
+    caseFields: merged1.fields,
+    missing_fields: merged1.missing_fields,
+  });
+
+  const merged2 = mergeCaseFields(created, { incident_date: "2026-09-05", amount: 200, fraud_category: "Mobile Money Fraud" });
+  const updated = updateCaseFields(created.case_id, merged2.fields, merged2.missing_fields);
+
+  assert.equal(updated.language, "twi");
+});
+
+test("updateCaseFields updates input_mode when a later turn used a different mode (e.g. started by text, finished by voice)", () => {
+  const merged1 = mergeCaseFields(EMPTY, { ...EMPTY, incident_summary: "hi" });
+  const created = createCase({
+    customer_contact: "0244000444",
+    channel: "whatsapp",
+    input_mode: "text",
+    caseFields: merged1.fields,
+    missing_fields: merged1.missing_fields,
+  });
+  assert.equal(created.input_mode, "text");
+
+  const merged2 = mergeCaseFields(created, { incident_date: "2026-09-05", amount: 200, fraud_category: "Mobile Money Fraud" });
+  const updated = updateCaseFields(created.case_id, merged2.fields, merged2.missing_fields, undefined, undefined, "voice");
+
+  assert.equal(updated.input_mode, "voice");
+});
+
 test("getCaseForCustomer refuses to return a case to the wrong phone number", () => {
   const merged = mergeCaseFields(EMPTY, { ...EMPTY, incident_summary: "test" });
   const created = createCase({

@@ -82,3 +82,32 @@ test("buildMTNEscalationNotice includes the count and the number", () => {
   assert.match(notice, /0501234567/);
   assert.match(notice, /5/);
 });
+
+test("findMatchingCases matches the same email in different casing", () => {
+  const newCase = makeCase({ case_id: "new", customer_contact: "0201111111", suspected_number: null, suspected_email: "Scammer@Gmail.com" });
+  const existing = [makeCase({ case_id: "old", customer_contact: "0202222222", suspected_number: null, suspected_email: "scammer@gmail.com" })];
+
+  const matches = findMatchingCases(newCase, existing);
+  assert.equal(matches.length, 1);
+  assert.equal(matches[0].case_id, "old");
+  assert.equal(matches[0].matchedOn, "email");
+});
+
+test("findMatchingCases doesn't cross-match a number against an email", () => {
+  const newCase = makeCase({ case_id: "new", customer_contact: "0201111111", suspected_number: null, suspected_email: "scammer@gmail.com" });
+  const existing = [makeCase({ case_id: "old", customer_contact: "0202222222", suspected_number: "0244123456", suspected_email: null })];
+
+  assert.equal(findMatchingCases(newCase, existing).length, 0);
+});
+
+test("findMatchingCases doesn't double-count a case matching on both number and email", () => {
+  const newCase = makeCase({ case_id: "new", customer_contact: "0201111111", suspected_number: "0244123456", suspected_email: "scammer@gmail.com" });
+  const existing = [makeCase({ case_id: "old", customer_contact: "0202222222", suspected_number: "0244123456", suspected_email: "scammer@gmail.com" })];
+
+  assert.equal(findMatchingCases(newCase, existing).length, 1);
+});
+
+test("buildAlertMessage includes the suspected email when matchedOn is email", () => {
+  const message = buildAlertMessage(makeCase({ suspected_email: "scammer@gmail.com", matchedOn: "email" }));
+  assert.match(message, /scammer@gmail\.com/);
+});

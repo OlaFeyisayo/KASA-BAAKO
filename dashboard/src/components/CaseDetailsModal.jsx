@@ -105,7 +105,7 @@ function CaseDetailsModal({ caseData, onClose, onStatusChange, token, isFraudAle
             <span className="bg-yellow-400 text-slate-900 text-sm font-semibold px-3 py-1.5 rounded-full">{caseData.case_id}</span>
             {isFraudAlert && (
               <span className="flex items-center gap-1.5 bg-red-50 dark:bg-red-950 text-red-700 dark:text-red-300 text-xs font-medium px-3 py-1.5 rounded-lg">
-                <AlertTriangle size={13} /> This number appears in {relatedCount} other report{relatedCount === 1 ? '' : 's'}
+                <AlertTriangle size={13} /> This number/email appears in {relatedCount} other report{relatedCount === 1 ? '' : 's'}
               </span>
             )}
           </div>
@@ -164,6 +164,10 @@ function CaseDetailsModal({ caseData, onClose, onStatusChange, token, isFraudAle
             <div className="bg-slate-50 dark:bg-slate-800 rounded-xl p-3">
               <div className="text-xs text-slate-400 mb-1">Suspected number</div>
               <div className="text-sm font-medium text-slate-800 dark:text-slate-100">{caseData.suspected_number || 'Not provided'}</div>
+            </div>
+            <div className="bg-slate-50 dark:bg-slate-800 rounded-xl p-3">
+              <div className="text-xs text-slate-400 mb-1">Suspected email</div>
+              <div className="text-sm font-medium text-slate-800 dark:text-slate-100 break-all">{caseData.suspected_email || 'Not provided'}</div>
             </div>
             <div className="bg-slate-50 dark:bg-slate-800 rounded-xl p-3">
               <div className="text-xs text-slate-400 mb-1">Transaction ID</div>

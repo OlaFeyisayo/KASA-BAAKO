@@ -19,6 +19,19 @@ export const db = new Database(DB_PATH);
 db.pragma("journal_mode = WAL");
 
 const schema = readFileSync(join(__dirname, "schema.sql"), "utf-8");
+
+// Must run BEFORE db.exec(schema) below — schema.sql's CREATE TABLE IF NOT
+// EXISTS is a no-op on an already-existing `cases` table, so on a database
+// created before suspected_email existed, schema.sql's own CREATE INDEX on
+// suspected_email_normalized would fail with "no such column" if the ALTER
+// ran after it instead.
+const casesTableExists = db.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='cases'").get();
+if (casesTableExists) {
+  const cols = db.prepare("PRAGMA table_info(cases)").all().map((c) => c.name);
+  if (!cols.includes("suspected_email")) db.exec("ALTER TABLE cases ADD COLUMN suspected_email TEXT");
+  if (!cols.includes("suspected_email_normalized")) db.exec("ALTER TABLE cases ADD COLUMN suspected_email_normalized TEXT");
+}
+
 db.exec(schema);
 
 // Migrates an existing database's old single-value `audio_ref` column into

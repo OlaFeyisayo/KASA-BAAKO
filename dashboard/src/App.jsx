@@ -108,8 +108,15 @@ function App() {
     if (c.suspected_number) acc[c.suspected_number] = (acc[c.suspected_number] || 0) + 1
     return acc
   }, {})
+  const emailCounts = cases.reduce((acc, c) => {
+    if (c.suspected_email) acc[c.suspected_email] = (acc[c.suspected_email] || 0) + 1
+    return acc
+  }, {})
   const fraudNumbers = new Set(Object.keys(numberCounts).filter(n => numberCounts[n] > 1))
-  const fraudAlertCount = cases.filter(c => fraudNumbers.has(c.suspected_number)).length
+  const fraudEmails = new Set(Object.keys(emailCounts).filter(e => emailCounts[e] > 1))
+  const fraudAlertCount = cases.filter(c =>
+    fraudNumbers.has(c.suspected_number) || fraudEmails.has(c.suspected_email)
+  ).length
 
   async function handleStatusChange(caseId, newStatus) {
     const previousCases = cases
@@ -204,8 +211,14 @@ function App() {
         caseData={selectedCase}
         onClose={() => setSelectedCase(null)}
         onStatusChange={handleStatusChange}
-        isFraudAlert={selectedCase ? fraudNumbers.has(selectedCase.suspected_number) : false}
-        relatedCount={selectedCase ? (numberCounts[selectedCase.suspected_number] || 1) - 1 : 0}
+        isFraudAlert={selectedCase ? (fraudNumbers.has(selectedCase.suspected_number) || fraudEmails.has(selectedCase.suspected_email)) : false}
+        // A case could in theory be flagged by both identifiers at once — take
+        // whichever count is higher rather than summing, since summing could
+        // double-count the same related case if it shares both with this one.
+        relatedCount={selectedCase ? Math.max(
+          (numberCounts[selectedCase.suspected_number] || 1) - 1,
+          (emailCounts[selectedCase.suspected_email] || 1) - 1
+        ) : 0}
         token={token}
       />
     </div>

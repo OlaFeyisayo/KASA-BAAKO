@@ -190,6 +190,12 @@ const languageByCustomer = new Map();
 // restart tradeoff as languageByCustomer above.
 const pendingNumberFollowUp = new Map();
 
+// Same as pendingNumberFollowUp, but for "what's the suspect's email?" —
+// asked instead of the phone-number question for a Phishing-category case,
+// since a phishing scam is normally identified by the sender's email/link,
+// not a phone number.
+const pendingEmailFollowUp = new Map();
+
 // Tracks a customer mid-guided-flow: { step, answers }. Same in-memory/
 // reset-on-restart tradeoff as the maps above — a restart mid-guided-flow
 // just starts over, which is fine.
@@ -245,6 +251,7 @@ const TEXT = {
     genericError: "Something went wrong processing your report. Please try again.",
     fallbackFollowUp: "Could you give me a bit more detail about what happened?",
     askSuspectedNumber: "Do you have the phone number the fraudster used? If you don't know it, just reply \"unknown\".",
+    askSuspectedEmail: "Do you have the email address that sent it? If you don't know it, just reply \"unknown\".",
     confirmation: (id) => `Thank you. Your case number is ${id}. We've recorded your report.`,
     restarted: "Okay, let's start over.",
     restartButton: [{ id: "restart", title: "🔄 Restart" }],
@@ -268,6 +275,9 @@ const TEXT = {
     genericError: "Biribi ankɔ yie wɔ wo amanneɛbɔ no ho adwuma mu. Yɛsrɛ wo, sɔ hwɛ bio.",
     fallbackFollowUp: "Wobɛtumi aka deɛ ɛsii no mu nsɛm bi akyerɛ me?",
     askSuspectedNumber: "Wowɔ telefon nɔma a nsisifoɔ no de yɛɛ eyi? Sɛ wonnim a, kyerɛw \"unknown\".",
+    // Best-effort Twi phrasing — worth a native-speaker review, like the
+    // rest of this file's Twi text.
+    askSuspectedEmail: "Wowɔ email address a nsisifoɔ no de somaa wo saa nkra no? Sɛ wonnim a, kyerɛw \"unknown\".",
     confirmation: (id) => `Meda wo ase. Wo case number ne ${id}. Yɛasie wo amanneɛbɔ no.`,
     restarted: "Ɛyɛ, momma yɛnhyɛ aseɛ bio.",
     restartButton: [{ id: "restart", title: "🔄 Hyɛ Aseɛ Bio" }],
@@ -521,6 +531,28 @@ export async function handleIncomingMessage(req, res) {
       return;
     }
 
+    // Same as the pendingNumberFollowUp block above, but for the "what's the
+    // suspect's email?" follow-up asked on a Phishing-category case.
+    if (pendingEmailFollowUp.has(from)) {
+      if (message.type === "text" || message.type === "audio") {
+        const caseId = pendingEmailFollowUp.get(from);
+        pendingEmailFollowUp.delete(from);
+
+        if (message.type === "audio") {
+          const { buffer, mimeType } = await downloadWhatsAppMedia(message.audio.id);
+          await runReportTurn({
+            from, audioBuffer: buffer, contentType: mimeType, input_mode: "voice", lang,
+            caseId, skipEmailFollowUp: true, audioRef: message.audio.id,
+          });
+        } else {
+          await runReportTurn({ from, text: typedText, input_mode: "text", lang, caseId, skipEmailFollowUp: true });
+        }
+        return;
+      }
+      await sendWithRestart(from, lang, t.unsupportedMessage);
+      return;
+    }
+
     if (message.type === "text") {
       const body = typedText;
 
@@ -548,7 +580,7 @@ export async function handleIncomingMessage(req, res) {
   }
 }
 
-async function runReportTurn({ from, text, audioBuffer, contentType, input_mode, lang, caseId, skipNumberFollowUp = false, audioRef }) {
+async function runReportTurn({ from, text, audioBuffer, contentType, input_mode, lang, caseId, skipNumberFollowUp = false, skipEmailFollowUp = false, audioRef }) {
   const t = TEXT[lang];
 
   // ASR's own timeout now scales up to several minutes for a long
@@ -603,17 +635,36 @@ async function runReportTurn({ from, text, audioBuffer, contentType, input_mode,
     return;
   }
 
-  // Everything required is in, but suspected_number is deliberately
-  // optional (see llm.js) — worth one explicit ask since it's the field
-  // alerts.js actually cross-matches repeat scammers on, but only once:
-  // skipNumberFollowUp is true on the turn answering this very question,
-  // so we don't loop asking it forever.
-  if (!skipNumberFollowUp && !result.case.suspected_number) {
+  // Everything required is in, but suspected_number/suspected_email are
+  // deliberately optional (see llm.js) — worth one explicit ask since
+  // they're the fields alerts.js actually cross-matches repeat scammers on,
+  // but only once: skipNumberFollowUp/skipEmailFollowUp is true on the turn
+  // answering this very question, so we don't loop asking it forever.
+  //
+  // A Phishing case is normally identified by the sender's email (or a
+  // link), not a phone number, so ask for the email instead of the number
+  // for that category — asking for a phone number on a phishing report was
+  // confusing customers who had no scammer number to give.
+  const isPhishing = result.case.fraud_category === "Phishing";
+  if (isPhishing && !skipEmailFollowUp && !result.case.suspected_email) {
+    pendingEmailFollowUp.set(from, result.case_id);
+    await sendWithRestart(from, lang, t.askSuspectedEmail);
+    return;
+  }
+  if (!isPhishing && !skipNumberFollowUp && !result.case.suspected_number) {
     pendingNumberFollowUp.set(from, result.case_id);
     await sendWithRestart(from, lang, t.askSuspectedNumber);
     return;
   }
   pendingNumberFollowUp.delete(from);
+  pendingEmailFollowUp.delete(from);
+
+  // The conversation is genuinely over at this point (case complete, no
+  // pending follow-up) — clear the cached language so the customer's next
+  // message (e.g. a casual "hi" before starting a new report) starts fresh
+  // with the language prompt, instead of being silently treated as more
+  // report text in whatever language they used last time.
+  languageByCustomer.delete(from);
 
   await sendWhatsAppText(from, t.confirmation(result.case_id));
 

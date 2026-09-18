@@ -7,9 +7,10 @@
 import { transcribeAudio } from "./asr.js";
 import { buildCase } from "./llm.js";
 import { synthesizeSpeech } from "./tts.js";
-import { createCase, mergeCaseFields, updateCaseFields, getCaseForCustomer, getCasesBySuspectedNumber } from "../db/cases.js";
+import { createCase, mergeCaseFields, updateCaseFields, getCaseForCustomer, getCasesBySuspectedNumber, getCasesBySuspectedEmail } from "../db/cases.js";
 import { findMatchingCases, buildAlertMessage, shouldEscalateToMTN, buildMTNEscalationNotice } from "./alerts.js";
 import { normalizePhoneNumber } from "../utils/phone.js";
+import { normalizeEmail } from "../utils/email.js";
 
 const EMPTY_CASE_FIELDS = {
   incident_summary: null,
@@ -17,6 +18,7 @@ const EMPTY_CASE_FIELDS = {
   amount: null,
   fraud_category: null,
   suspected_number: null,
+  suspected_email: null,
   transaction_id: null,
 };
 
@@ -152,7 +154,7 @@ export async function processReport({ text, audioBuffer, contentType, customer_c
   const merged = mergeCaseFields(existingCase, result.case);
 
   const finalCase = case_id
-    ? updateCaseFields(case_id, merged.fields, merged.missing_fields, audio_ref)
+    ? updateCaseFields(case_id, merged.fields, merged.missing_fields, audio_ref, language === "english" ? "english" : "twi", input_mode)
     : createCase({
         customer_contact,
         channel,
@@ -196,7 +198,10 @@ export async function processReport({ text, audioBuffer, contentType, customer_c
       }
     }
 
-    const candidates = getCasesBySuspectedNumber(normalizePhoneNumber(finalCase.suspected_number), finalCase.case_id);
+    const candidates = [
+      ...getCasesBySuspectedNumber(normalizePhoneNumber(finalCase.suspected_number), finalCase.case_id),
+      ...getCasesBySuspectedEmail(normalizeEmail(finalCase.suspected_email), finalCase.case_id),
+    ];
     const matches = findMatchingCases(finalCase, candidates);
     if (matches.length > 0) {
       alertInfo = shouldEscalateToMTN(matches)

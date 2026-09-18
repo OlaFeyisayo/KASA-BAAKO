@@ -29,9 +29,14 @@ test("buildSystemPrompt still describes a Twi customer's message correctly", () 
   assert.match(prompt, /question in Twi/);
 });
 
-test("buildSystemPrompt always instructs English for incident_summary, regardless of customer language", () => {
-  assert.match(buildSystemPrompt("twi"), /Write incident_summary in ENGLISH/);
-  assert.match(buildSystemPrompt("english"), /Write incident_summary in ENGLISH/);
+test("buildSystemPrompt always instructs English for incident_summary and incident_date, regardless of customer language", () => {
+  assert.match(buildSystemPrompt("twi"), /Write incident_summary AND incident_date in ENGLISH/);
+  assert.match(buildSystemPrompt("english"), /Write incident_summary AND incident_date in ENGLISH/);
+  // A bare Twi time word (e.g. "Nnora" = "yesterday") must be translated,
+  // not passed through verbatim — the field description spells out an
+  // example so the model doesn't just copy the word.
+  assert.match(buildSystemPrompt("twi"), /translated into ENGLISH/);
+  assert.match(buildSystemPrompt("twi"), /"Nnora" becomes "Yesterday"/);
 });
 
 test("buildCase degrades to 'nothing extracted' instead of throwing when Claude doesn't return valid JSON", async (t) => {
