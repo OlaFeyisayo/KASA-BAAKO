@@ -1,4 +1,4 @@
-import admin from "../services/firebaseAdmin.js";
+import { auth } from "../services/firebaseAdmin.js";
 
 // Replaces the old shared-password requireDashboardAuth. Every
 // dashboard-only route now expects a Firebase ID token (issued by the
@@ -13,7 +13,7 @@ export async function requireFirebaseAuth(req, res, next) {
   const idToken = authHeader.slice(7);
 
   try {
-    const decoded = await admin.auth().verifyIdToken(idToken);
+    const decoded = await auth.verifyIdToken(idToken);
     req.user = decoded; // { uid, email, ... } — available to route handlers if needed
     next();
   } catch (err) {
