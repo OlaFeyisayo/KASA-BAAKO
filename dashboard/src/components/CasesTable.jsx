@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useState } from 'react'
 import StatusBadge from './StatusBadge'
+import { formatAmount } from '../utils/formatAmount'
 
 function SortableHeader({ label, sortKey, sortConfig, onSort }) {
   const isActive = sortConfig.key === sortKey
@@ -130,7 +131,7 @@ function CasesTable({ cases, onViewDetails, sortConfig, onSort }) {
               </td>
 
               <td className="px-4 py-3 text-slate-700 dark:text-slate-300">
-                GHS {Number(c.amount).toFixed(2)}
+                {formatAmount(c.amount)}
               </td>
 
               <td className="px-4 py-3 text-slate-700 dark:text-slate-300">
