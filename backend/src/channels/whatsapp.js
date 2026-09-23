@@ -17,8 +17,10 @@
 // Issues along the way (see middleware/verifySignature.js + server.js).
 
 import { processReport, withCustomerLock } from "../services/reportPipeline.js";
-import { getCaseForCustomer, getOpenCaseForCustomer } from "../db/cases.js";
+import { getCaseForCustomer, getOpenCaseForCustomer, getCasesForCustomer } from "../db/cases.js";
+import { createCallbackRequest } from "../db/callbacks.js";
 import { REQUIRED_FIELDS } from "../services/llm.js";
+import { synthesizeSpeech } from "../services/tts.js";
 
 const GRAPH_API_VERSION = "v21.0";
 const CASE_ID_PATTERN = /^KB-[0-9A-F]{12}$/i;
@@ -201,6 +203,88 @@ const pendingEmailFollowUp = new Map();
 // just starts over, which is fine.
 const guidedFlowByCustomer = new Map();
 
+// Customers who get the bot's questions read aloud as voice notes (in
+// addition to the normal text — never instead of it, so a deaf or
+// hard-of-hearing customer isn't shut out). Turned on by choosing Voice or
+// sending a voice note; off again for Text/Guided, restart, or a finished
+// case. WhatsApp never auto-plays a bot's audio: the first voice note needs
+// one tap, after which WhatsApp plays consecutive ones back to back.
+const voiceReplyByCustomer = new Set();
+
+// Where a customer is in the read-back-and-confirm step, once their report is
+// complete: { caseId, alert, at, stage }. stage "confirm" = shown a summary,
+// waiting for Yes/Change; "correct" = asked to change something, waiting for
+// the fix. The fraud `alert` (warnings to other customers) is held back until
+// they confirm. Same in-memory tradeoff as the maps above; the case itself is
+// already saved in SQLite, so losing this on a restart loses nothing.
+const reviewByCustomer = new Map();
+const REVIEW_TTL_MS = 30 * 60 * 1000;
+const AFFIRMATIVE = /^(yes|yeah|yep|ok|okay|correct|right|aane|yiw|yoo|ɛyɛ|eyɛ)[.!\s]*$/i;
+
+// Khaya's voices can't read numerals or Latin letters: a round trip through
+// Khaya's own speech recognition heard a Twi "9 F F D" as "ba-da-da-da-da…",
+// and English "4 8 1" as gibberish too. Digits written out as words came
+// back word-for-word in both languages, so everything spoken uses words.
+const DIGIT_WORDS = {
+  en: ["zero", "one", "two", "three", "four", "five", "six", "seven", "eight", "nine"],
+  // "zero" for 0, not a Twi word: recognition heard "hwee" as "hwɛ".
+  tw: ["zero", "baako", "mmienu", "mmiɛnsa", "ɛnan", "enum", "nsia", "nson", "nwɔtwe", "nkron"],
+};
+// Only matter for older hex-style case ids (new ones are digits only).
+const LETTER_WORDS = {
+  en: { A: "ay", B: "bee", C: "see", D: "dee", E: "ee", F: "eff", K: "kay" },
+  tw: { A: "ee", B: "bi", C: "si", D: "di", E: "i", F: "ɛf", K: "kei" },
+};
+
+/**
+ * A case number as speakable words, in groups of three so the customer can
+ * follow and note it down: "KB-481902773506" ->
+ * en: "kay bee. four, eight, one. nine, zero, two. seven, seven, three. five, zero, six"
+ * tw: "ɛnan, nwɔtwe, baako. nkron, zero, mmienu. nson, nson, mmiɛnsa. enum, zero, nsia"
+ * The "KB" prefix is only spoken in English — English letters weren't
+ * intelligible in the Twi voice (the full number is always in the text too).
+ */
+export function spellOutCaseId(caseId, lang = "en") {
+  const [prefix, rest = ""] = String(caseId).toUpperCase().split("-");
+  const say = (ch) => (/\d/.test(ch) ? DIGIT_WORDS[lang][Number(ch)] : (LETTER_WORDS[lang][ch] ?? ch.toLowerCase()));
+  const groups = (rest.match(/.{1,3}/g) ?? []).map((g) => [...g].map(say).join(", "));
+  const head = lang === "en" ? [[...prefix].map(say).join(" ")] : [];
+  return [...head, ...groups].join(". ");
+}
+
+export function sanitizeForSpeech(text, lang) {
+  let out = text
+    .replace(/\p{Extended_Pictographic}/gu, "")
+    // "(e.g. 500)" style examples: not worth speaking, and numerals garble
+    .replace(/\([^)]*\)/g, "")
+    .replace(/["“”]/g, "");
+  // Any numeral left in Twi speech would come out as gibberish — read it digit by digit.
+  if (lang === "tw") out = out.replace(/\d/g, (d) => ` ${DIGIT_WORDS.tw[Number(d)]} `);
+  return out.replace(/\s+/g, " ").replace(/\s+([.,?!])/g, "$1").trim();
+}
+
+// Never rejects: a slow or failing TTS call (Khaya's latency varies a lot)
+// must not stop the customer getting their message.
+function startSpeech(lang, text) {
+  return synthesizeSpeech(sanitizeForSpeech(text, lang), {
+    format: "mp3", // WhatsApp's media upload rejects Khaya's default wav
+    language: lang === "tw" ? "twi" : "eng",
+  }).catch((err) => {
+    console.error("[whatsapp] voice reply failed, continuing with text only:", err.message);
+    return null;
+  });
+}
+
+// Text first, audio right behind it: synthesis runs WHILE the text goes
+// out, so a slow Khaya only delays the audio, never the message itself.
+// speechText null/undefined = text only.
+async function sendTextThenSpeech(to, lang, speechText, sendText) {
+  const speech = speechText ? startSpeech(lang, speechText) : null;
+  await sendText();
+  const audio = speech ? await speech : null;
+  if (audio) await sendWhatsAppAudio(to, audio);
+}
+
 // Meta retries a webhook delivery if it never gets a 200 response back in
 // time — every retry resends the EXACT same message. This normally isn't
 // visible, but if the server was ever briefly unreachable (a crash, a
@@ -231,7 +315,7 @@ function getLanguage(from, openCase) {
   return null;
 }
 
-const TEXT = {
+export const TEXT = {
   en: {
     modeChoicePrompt:
       "Okay — we'll continue in English.\n\nHow would you like to report the incident? (Or just send a voice note or type your report directly, anytime.)",
@@ -253,8 +337,37 @@ const TEXT = {
     askSuspectedNumber: "Do you have the phone number the fraudster used? If you don't know it, just reply \"unknown\".",
     askSuspectedEmail: "Do you have the email address that sent it? If you don't know it, just reply \"unknown\".",
     confirmation: (id) => `Thank you. Your case number is ${id}. We've recorded your report.`,
+    askSuspectedNumberSpeech: "Do you have the phone number the fraudster used? If you don't know it, just say you don't know.",
+    askSuspectedEmailSpeech: "Do you have the email address that sent it? If you don't know it, just say you don't know.",
+    confirmationSpeech: (id) => `Thank you. Your case number is ${spellOutCaseId(id, "en")}. I will repeat it. ${spellOutCaseId(id, "en")}. We have recorded your report.`,
     restarted: "Okay, let's start over.",
     restartButton: [{ id: "restart", title: "🔄 Restart" }],
+
+    helpPrompt: "Already reported something? Check on your cases, or ask our team to call you back.",
+    helpButtons: [
+      { id: "menu_cases", title: "📂 My cases" },
+      { id: "menu_callback", title: "📞 Call me back" },
+    ],
+    callbackButton: [{ id: "menu_callback", title: "📞 Call me back" }],
+    callbackRequested: "Done. We've passed your number to our team, and someone will call you back.",
+    callbackAlready: "You've already asked for a call back. Our team has your number and will call you.",
+    voiceUnclear: "Sorry, I couldn't understand that recording. You can try again, type your report instead, or ask our team to call you back.",
+    noCases: "You haven't reported anything with this number yet.",
+    casesHeader: "Your most recent cases:",
+    statusLabels: { received: "Received", under_review: "Under review", resolved: "Resolved" },
+    statusSpoken: { received: "we have received it", under_review: "our team is reviewing it", resolved: "it has been resolved" },
+    unfinished: "report not finished",
+    casesSpeech: (spelledId, status) => `Your most recent case number is ${spelledId}. ${status}.`,
+
+    readBackIntro: "Here's what I understood:",
+    readBackLabels: { type: "Type", amount: "Amount", when: "When", suspect: "Suspect", what: "What happened" },
+    readBackQuestion: "Is this correct?",
+    readBackSpeech: (c) => `Here is what I understood. ${c.fraud_category}. About ${c.amount} cedis. ${c.incident_date}. Is this correct? Tap yes, or tap change it.`,
+    confirmButtons: [
+      { id: "confirm_yes", title: "✅ Yes, correct" },
+      { id: "confirm_no", title: "✏️ Change it" },
+    ],
+    askCorrection: "Okay. Tell me what to fix, by voice note or text. For example: \"the amount was 500\".",
   },
   tw: {
     modeChoicePrompt:
@@ -279,8 +392,41 @@ const TEXT = {
     // rest of this file's Twi text.
     askSuspectedEmail: "Wowɔ email address a nsisifoɔ no de somaa wo saa nkra no? Sɛ wonnim a, kyerɛw \"unknown\".",
     confirmation: (id) => `Meda wo ase. Wo case number ne ${id}. Yɛasie wo amanneɛbɔ no.`,
+    // Spoken versions avoid English words and the quoted "unknown": the Twi
+    // voice mangled them ("unknown" was heard as "nkron"; "case number" as
+    // "kasanum ba"), while plain Twi words came back intact.
+    askSuspectedNumberSpeech: "Wowɔ telefon nɔma a nsisifoɔ no de yɛɛ eyi? Sɛ wonnim a, ka sɛ wonnim.",
+    askSuspectedEmailSpeech: "Wowɔ email address a nsisifoɔ no de somaa wo saa nkra no? Sɛ wonnim a, ka sɛ wonnim.",
+    confirmationSpeech: (id) => `Meda wo ase. Wo amanneɛbɔ nɔma ne ${spellOutCaseId(id, "tw")}. Mɛka bio. ${spellOutCaseId(id, "tw")}. Yɛasie wo amanneɛbɔ no.`,
     restarted: "Ɛyɛ, momma yɛnhyɛ aseɛ bio.",
     restartButton: [{ id: "restart", title: "🔄 Hyɛ Aseɛ Bio" }],
+
+    // All of the Twi below is best-effort — worth a native-speaker review.
+    helpPrompt: "Wobɔɔ biribi dedaw? Hwɛ wo amanneɛbɔ no, anaasɛ srɛ sɛ yɛn adwumayɛfoɔ mfrɛ wo.",
+    helpButtons: [
+      { id: "menu_cases", title: "📂 Me nsɛm" },
+      { id: "menu_callback", title: "📞 Frɛ me" },
+    ],
+    callbackButton: [{ id: "menu_callback", title: "📞 Frɛ me" }],
+    callbackRequested: "Ɛyɛ. Yɛde wo nɔma ama yɛn adwumayɛfoɔ, na obi bɛfrɛ wo.",
+    callbackAlready: "Woasrɛ dedaw sɛ yɛmfrɛ wo. Yɛn adwumayɛfoɔ wɔ wo nɔma, na wɔbɛfrɛ wo.",
+    voiceUnclear: "Yɛpa wo kyɛw, yɛante saa nne yi ase. Sɔ hwɛ bio, anaasɛ kyerɛw wo amanneɛbɔ, anaasɛ srɛ sɛ yɛmfrɛ wo.",
+    noCases: "Wonnyaa amanneɛbɔ biara wɔ saa nɔma yi so.",
+    casesHeader: "Wo amanneɛbɔ a ɛfiri nnansa yi:",
+    statusLabels: { received: "Yɛanya", under_review: "Yɛrehwɛ mu", resolved: "Ɛyɛ awie" },
+    statusSpoken: { received: "Yɛanya no", under_review: "Yɛrehwɛ mu", resolved: "Yɛayɛ awie" },
+    unfinished: "amanneɛbɔ no nnwie",
+    casesSpeech: (spelledId, status) => `Wo amanneɛbɔ nɔma a ɛtwa toɔ ne ${spelledId}. ${status}.`,
+
+    readBackIntro: "Deɛ mate ne yei:",
+    readBackLabels: { type: "Nsisi no", amount: "Sika dodoɔ", when: "Da", suspect: "Nea ɔyɛɛ", what: "Deɛ ɛsii" },
+    readBackQuestion: "Ɛyɛ nokorɛ?",
+    readBackSpeech: () => "Yɛatwerɛ deɛ woaka no. Sɛ ɛyɛ nokorɛ a, mia Aane. Sɛ ɛnyɛ a, mia Sesa bi.",
+    confirmButtons: [
+      { id: "confirm_yes", title: "✅ Aane, ɛyɛ" },
+      { id: "confirm_no", title: "✏️ Sesa bi" },
+    ],
+    askCorrection: "Ɛyɛ. Kyerɛ me deɛ ɛsɛ sɛ yɛsesa, fa wo nne anaasɛ kyerɛw.",
   },
 };
 
@@ -382,8 +528,11 @@ export function nextFollowUpQuestion(missingFields, followUpQuestions, lang) {
 // stuck on) carries a Restart button — otherwise handleIncomingMessage's
 // restart handling exists but is never actually reachable, since nothing
 // ever shows the customer that it's an option.
-async function sendWithRestart(to, lang, bodyText) {
-  await sendWhatsAppButtons(to, bodyText, TEXT[lang].restartButton);
+async function sendWithRestart(to, lang, bodyText, { spoken = true, speech, extraButtons = [] } = {}) {
+  const speechText = spoken && voiceReplyByCustomer.has(to) ? (speech ?? bodyText) : null;
+  await sendTextThenSpeech(to, lang, speechText, () =>
+    sendWhatsAppButtons(to, bodyText, [...TEXT[lang].restartButton, ...extraButtons])
+  );
 }
 
 async function sendLanguageChoice(to) {
@@ -401,6 +550,140 @@ async function startGuidedFlow(to, lang) {
   guidedFlowByCustomer.set(to, { step: 0, answers: {} });
   const question = GUIDED_QUESTIONS[lang][0];
   await sendWhatsAppButtons(to, question.prompt, question.buttons);
+}
+
+async function sendHelpChoice(to, lang) {
+  await sendWhatsAppButtons(to, TEXT[lang].helpPrompt, TEXT[lang].helpButtons);
+}
+
+function casesMessage(lang, cases) {
+  const t = TEXT[lang];
+  const lines = cases.map((c, i) => {
+    const what = c.missing_fields.length > 0 ? t.unfinished : c.fraud_category;
+    return `${i + 1}. ${c.case_id} — ${what} — ${t.statusLabels[c.status] ?? c.status}`;
+  });
+  return [t.casesHeader, ...lines].join("\n");
+}
+
+// "My cases": the customer's phone number already identifies them, so they
+// never have to type, dictate or remember a case number to check on one.
+async function sendMyCases(from, lang) {
+  const t = TEXT[lang];
+  const cases = getCasesForCustomer(from, 3);
+  const voice = voiceReplyByCustomer.has(from);
+  if (cases.length === 0) {
+    await sendTextThenSpeech(from, lang, voice ? t.noCases : null, () => sendWhatsAppText(from, t.noCases));
+    return;
+  }
+  const latest = cases[0];
+  const speech = voice ? t.casesSpeech(spellOutCaseId(latest.case_id, lang), t.statusSpoken[latest.status]) : null;
+  await sendTextThenSpeech(from, lang, speech, () => sendWhatsAppText(from, casesMessage(lang, cases)));
+}
+
+// The human fallback: for anyone the voice pipeline can't serve.
+async function handleCallbackRequest(from, lang) {
+  const t = TEXT[lang];
+  const { alreadyPending } = createCallbackRequest({ customer_contact: from, language: lang === "tw" ? "twi" : "english" });
+  const message = alreadyPending ? t.callbackAlready : t.callbackRequested;
+  await sendTextThenSpeech(from, lang, voiceReplyByCustomer.has(from) ? message : null, () => sendWhatsAppText(from, message));
+}
+
+function readBackMessage(lang, c) {
+  const t = TEXT[lang];
+  const l = t.readBackLabels;
+  const summary = c.incident_summary.length > 400 ? `${c.incident_summary.slice(0, 400)}…` : c.incident_summary;
+  const lines = [t.readBackIntro, "", `• ${l.type}: ${c.fraud_category}`, `• ${l.amount}: GHS ${c.amount}`, `• ${l.when}: ${c.incident_date}`];
+  const suspect = c.suspected_number || c.suspected_email;
+  if (suspect) lines.push(`• ${l.suspect}: ${suspect}`);
+  lines.push(`• ${l.what}: ${summary}`, "", t.readBackQuestion);
+  return lines.join("\n");
+}
+
+// Reads the report back before it's final, so a wrong transcription or a
+// misheard amount gets caught by the customer instead of reaching MTN staff.
+async function sendReadBack(from, lang, result) {
+  const t = TEXT[lang];
+  reviewByCustomer.set(from, { caseId: result.case_id, alert: result.alert, at: Date.now(), stage: "confirm" });
+  const speech = voiceReplyByCustomer.has(from) ? t.readBackSpeech(result.case) : null;
+  await sendTextThenSpeech(from, lang, speech, () =>
+    sendWhatsAppButtons(from, readBackMessage(lang, result.case), [...t.confirmButtons, ...t.restartButton])
+  );
+}
+
+// The customer confirmed: the conversation is genuinely over, so clear the
+// cached language (their next message, e.g. a casual "hi", starts fresh with
+// the language prompt instead of being treated as more report text) and voice
+// mode, then send the case number and any fraud warnings.
+async function completeReport(from, lang, caseId, alert) {
+  const t = TEXT[lang];
+  languageByCustomer.delete(from);
+  const wantsVoice = voiceReplyByCustomer.delete(from);
+
+  await sendTextThenSpeech(from, lang, wantsVoice ? t.confirmationSpeech(caseId) : null, () =>
+    sendWhatsAppText(from, t.confirmation(caseId))
+  );
+
+  if (alert?.type === "individual") {
+    for (const alertMessage of alert.messages) {
+      await sendWhatsAppText(alertMessage.to, alertMessage.text);
+    }
+  } else if (alert?.type === "mtn_escalation") {
+    // No live channel to MTN staff yet (dashboard has no notification feed) —
+    // logged for now so it's at least visible in the server console.
+    console.warn("[whatsapp] MTN escalation:", alert.notice);
+  }
+}
+
+// Falls back to their latest case if the server restarted between the
+// read-back and their tap (the review state is in memory only).
+function reviewedCaseId(from) {
+  return reviewByCustomer.get(from)?.caseId ?? getCasesForCustomer(from, 1)[0]?.case_id ?? null;
+}
+
+async function finalizeReport(from, lang) {
+  const review = reviewByCustomer.get(from);
+  const caseId = reviewedCaseId(from);
+  reviewByCustomer.delete(from);
+  if (!caseId) {
+    await sendWithRestart(from, lang, TEXT[lang].statusNotFound);
+    return;
+  }
+  await completeReport(from, lang, caseId, review?.alert ?? null);
+}
+
+async function startCorrection(from, lang) {
+  const caseId = reviewedCaseId(from);
+  if (!caseId) {
+    await sendWithRestart(from, lang, TEXT[lang].statusNotFound);
+    return;
+  }
+  reviewByCustomer.set(from, { caseId, alert: reviewByCustomer.get(from)?.alert ?? null, at: Date.now(), stage: "correct" });
+  await sendWithRestart(from, lang, TEXT[lang].askCorrection);
+}
+
+async function handleCorrection(from, lang, message, typedText) {
+  const common = {
+    from, lang, caseId: reviewedCaseId(from), correction: true,
+    // Already asked once; a fix shouldn't trigger the optional questions again.
+    skipNumberFollowUp: true, skipEmailFollowUp: true,
+  };
+  if (message.type === "audio") {
+    const { buffer, mimeType } = await downloadWhatsAppMedia(message.audio.id);
+    await runReportTurn({ ...common, audioBuffer: buffer, contentType: mimeType, input_mode: "voice", audioRef: message.audio.id });
+  } else {
+    await runReportTurn({ ...common, text: typedText, input_mode: "text" });
+  }
+}
+
+// A read-back the customer walked away from shouldn't swallow a message sent
+// hours later: after a while, forget it so their next message starts fresh.
+function expireStaleReview(from) {
+  const review = reviewByCustomer.get(from);
+  if (review && Date.now() - review.at > REVIEW_TTL_MS) {
+    reviewByCustomer.delete(from);
+    languageByCustomer.delete(from);
+    voiceReplyByCustomer.delete(from);
+  }
 }
 
 /** Handles one answer within an in-progress guided flow, for `from`. */
@@ -463,12 +746,15 @@ export async function handleIncomingMessage(req, res) {
   const buttonId = message.type === "interactive" ? message.interactive?.button_reply?.id : null;
 
   try {
+    expireStaleReview(from);
+
     // Language choice, and "restart" (typed or tapped), work at any point —
     // they don't require or interrupt an in-progress report.
     if (buttonId === "lang_en" || buttonId === "lang_tw") {
       const lang = buttonId === "lang_tw" ? "tw" : "en";
       languageByCustomer.set(from, lang);
       await sendModeChoice(from, lang);
+      await sendHelpChoice(from, lang);
       return;
     }
 
@@ -477,6 +763,9 @@ export async function handleIncomingMessage(req, res) {
       languageByCustomer.delete(from);
       guidedFlowByCustomer.delete(from);
       pendingNumberFollowUp.delete(from);
+      pendingEmailFollowUp.delete(from);
+      reviewByCustomer.delete(from);
+      voiceReplyByCustomer.delete(from);
       const lang = getLanguage(from, null) || "en";
       await sendWhatsAppText(from, TEXT[lang].restarted);
       await sendLanguageChoice(from);
@@ -491,18 +780,56 @@ export async function handleIncomingMessage(req, res) {
     }
     const t = TEXT[lang];
 
+    if (message.type === "audio") voiceReplyByCustomer.add(from);
+
+    if (buttonId === "menu_cases") {
+      await sendMyCases(from, lang);
+      return;
+    }
+    if (buttonId === "menu_callback") {
+      await handleCallbackRequest(from, lang);
+      return;
+    }
+    if (buttonId === "confirm_yes") {
+      await finalizeReport(from, lang);
+      return;
+    }
+    if (buttonId === "confirm_no") {
+      await startCorrection(from, lang);
+      return;
+    }
+
     if (buttonId === "mode_voice" || buttonId === "mode_text") {
+      if (buttonId === "mode_voice") voiceReplyByCustomer.add(from);
+      else voiceReplyByCustomer.delete(from);
       await sendWithRestart(from, lang, buttonId === "mode_voice" ? t.askVoice : t.askText);
       return;
     }
 
     if (buttonId === "mode_guided") {
+      voiceReplyByCustomer.delete(from);
       await startGuidedFlow(from, lang);
       return;
     }
 
     if (guidedFlowByCustomer.has(from)) {
       await handleGuidedAnswer(from, lang, message, typedText, buttonId);
+      return;
+    }
+
+    // Shown a read-back (or told to change something): a typed "yes" confirms,
+    // and any other text or voice note is the correction — so nobody is forced
+    // to find and tap a button.
+    if (reviewByCustomer.has(from) && !CASE_ID_PATTERN.test(typedText)) {
+      if (message.type === "text" && reviewByCustomer.get(from).stage === "confirm" && AFFIRMATIVE.test(typedText)) {
+        await finalizeReport(from, lang);
+        return;
+      }
+      if (message.type === "text" || message.type === "audio") {
+        await handleCorrection(from, lang, message, typedText);
+        return;
+      }
+      await sendWithRestart(from, lang, t.unsupportedMessage);
       return;
     }
 
@@ -580,7 +907,7 @@ export async function handleIncomingMessage(req, res) {
   }
 }
 
-async function runReportTurn({ from, text, audioBuffer, contentType, input_mode, lang, caseId, skipNumberFollowUp = false, skipEmailFollowUp = false, audioRef }) {
+async function runReportTurn({ from, text, audioBuffer, contentType, input_mode, lang, caseId, skipNumberFollowUp = false, skipEmailFollowUp = false, audioRef, correction = false }) {
   const t = TEXT[lang];
 
   // ASR's own timeout now scales up to several minutes for a long
@@ -589,7 +916,9 @@ async function runReportTurn({ from, text, audioBuffer, contentType, input_mode,
   // a Restart button too, since a long wait is exactly when someone might
   // want an escape hatch.
   if (input_mode === "voice") {
-    await sendWithRestart(from, lang, t.processingVoice);
+    // Text only: speaking this would add a whole TTS round trip before the
+    // transcription it's announcing even starts.
+    await sendWithRestart(from, lang, t.processingVoice, { spoken: false });
   }
 
   // Locked so that two near-simultaneous messages from the same customer
@@ -610,6 +939,7 @@ async function runReportTurn({ from, text, audioBuffer, contentType, input_mode,
         case_id: targetCaseId,
         language: lang === "tw" ? "twi" : "english",
         audio_ref: audioRef,
+        correction,
         // Customer explicitly asked not to receive a spoken readback of
         // their report after getting a case number — this also saves a
         // Khaya TTS call that would otherwise just be discarded unsent.
@@ -623,7 +953,15 @@ async function runReportTurn({ from, text, audioBuffer, contentType, input_mode,
     // exists, is untouched — they can try again or switch to typing)
     // instead of the generic error every other failure gets.
     if (input_mode === "voice" && /Khaya ASR request timed out/i.test(err.message)) {
-      await sendWithRestart(from, lang, t.voiceTimedOut);
+      await sendWithRestart(from, lang, t.voiceTimedOut, { extraButtons: t.callbackButton });
+      return;
+    }
+    // Transcription failed or came back empty — the recording was silent, too
+    // noisy, speech the recognizer can't handle, or Khaya itself is down or
+    // out of quota. Whatever the cause, the customer's way forward is the
+    // same: try again, type it instead, or ask for a person to call them.
+    if (input_mode === "voice" && /Khaya ASR|No text or audio provided/i.test(err.message)) {
+      await sendWithRestart(from, lang, t.voiceUnclear, { extraButtons: t.callbackButton });
       return;
     }
     throw err;
@@ -648,33 +986,19 @@ async function runReportTurn({ from, text, audioBuffer, contentType, input_mode,
   const isPhishing = result.case.fraud_category === "Phishing";
   if (isPhishing && !skipEmailFollowUp && !result.case.suspected_email) {
     pendingEmailFollowUp.set(from, result.case_id);
-    await sendWithRestart(from, lang, t.askSuspectedEmail);
+    await sendWithRestart(from, lang, t.askSuspectedEmail, { speech: t.askSuspectedEmailSpeech });
     return;
   }
   if (!isPhishing && !skipNumberFollowUp && !result.case.suspected_number) {
     pendingNumberFollowUp.set(from, result.case_id);
-    await sendWithRestart(from, lang, t.askSuspectedNumber);
+    await sendWithRestart(from, lang, t.askSuspectedNumber, { speech: t.askSuspectedNumberSpeech });
     return;
   }
   pendingNumberFollowUp.delete(from);
   pendingEmailFollowUp.delete(from);
 
-  // The conversation is genuinely over at this point (case complete, no
-  // pending follow-up) — clear the cached language so the customer's next
-  // message (e.g. a casual "hi" before starting a new report) starts fresh
-  // with the language prompt, instead of being silently treated as more
-  // report text in whatever language they used last time.
-  languageByCustomer.delete(from);
-
-  await sendWhatsAppText(from, t.confirmation(result.case_id));
-
-  if (result.alert?.type === "individual") {
-    for (const alertMessage of result.alert.messages) {
-      await sendWhatsAppText(alertMessage.to, alertMessage.text);
-    }
-  } else if (result.alert?.type === "mtn_escalation") {
-    // No live channel to MTN staff yet (dashboard has no notification feed) —
-    // logged for now so it's at least visible in the server console.
-    console.warn("[whatsapp] MTN escalation:", result.alert.notice);
-  }
+  // Everything's in — read it back and let the customer confirm or fix it
+  // before it's final. The case number, language reset and fraud warnings
+  // all happen in completeReport(), once they say yes.
+  await sendReadBack(from, lang, result);
 }

@@ -2,7 +2,10 @@
 // API: https://translation-api.ghananlp.org/tts/v2
 
 const TTS_BASE_URL = "https://translation-api.ghananlp.org/tts/v2";
-const REQUEST_TIMEOUT_MS = 15000;
+// Khaya's response time varies a lot (a 15s limit failed on longer sentences
+// like a spelled-out case number). Callers that speak to a customer send the
+// text first and let audio follow, so a long wait here only delays the audio.
+const REQUEST_TIMEOUT_MS = 40000;
 
 /**
  * Synthesizes Twi text into spoken audio using the Khaya TTS v2 API.

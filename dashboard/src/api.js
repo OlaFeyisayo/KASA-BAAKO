@@ -32,6 +32,33 @@ export async function fetchCaseAudioUrl(token, caseId, index) {
   return URL.createObjectURL(blob)
 }
 
+export async function fetchCallbackRequests(token) {
+  const res = await fetch(`${API_BASE}/callbacks`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (res.status === 401) {
+    const err = new Error('Session expired')
+    err.code = 'UNAUTHORIZED'
+    throw err
+  }
+  if (!res.ok) throw new Error('Failed to load callback requests')
+  return res.json()
+}
+
+export async function markCallbackDone(token, id) {
+  const res = await fetch(`${API_BASE}/callbacks/${id}/done`, {
+    method: 'PATCH',
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (res.status === 401) {
+    const err = new Error('Session expired')
+    err.code = 'UNAUTHORIZED'
+    throw err
+  }
+  if (!res.ok) throw new Error('Failed to update callback request')
+  return res.json()
+}
+
 export async function updateCaseStatus(token, caseId, status) {
   const res = await fetch(`${API_BASE}/cases/${encodeURIComponent(caseId)}/status`, {
     method: 'PATCH',

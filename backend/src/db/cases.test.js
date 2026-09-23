@@ -20,7 +20,7 @@ try {
 }
 process.env.DB_PATH = testDbPath;
 
-const { createCase, mergeCaseFields, updateCaseFields, getCaseForCustomer, updateCaseStatus, getAllCases, getCasesBySuspectedNumber } = await import("./cases.js");
+const { createCase, mergeCaseFields, updateCaseFields, getCaseForCustomer, updateCaseStatus, getAllCases, getCasesBySuspectedNumber, getCasesForCustomer } = await import("./cases.js");
 const { normalizePhoneNumber } = await import("../utils/phone.js");
 
 const EMPTY = {
@@ -147,6 +147,74 @@ test("updateCaseFields updates input_mode when a later turn used a different mod
   const updated = updateCaseFields(created.case_id, merged2.fields, merged2.missing_fields, undefined, undefined, "voice");
 
   assert.equal(updated.input_mode, "voice");
+});
+
+test("mergeCaseFields in correction mode lets a new value replace a stored one", () => {
+  const existing = { ...EMPTY, incident_summary: "Fake prize call", amount: 500, incident_date: "Yesterday", fraud_category: "Impersonation" };
+  const merged = mergeCaseFields(existing, { ...EMPTY, amount: 50, incident_date: "Today", fraud_category: "Phishing" }, { correction: true });
+
+  assert.equal(merged.fields.amount, 50);
+  assert.equal(merged.fields.incident_date, "Today");
+  assert.equal(merged.fields.fraud_category, "Phishing");
+});
+
+test("mergeCaseFields in correction mode keeps the original summary and ignores a fallback 'Other' category", () => {
+  const existing = { ...EMPTY, incident_summary: "Fake prize call", amount: 500, incident_date: "Yesterday", fraud_category: "Impersonation" };
+  // A short correction like "it was 50 cedis" gives the model nothing to
+  // summarize or classify — it must not clobber the real values.
+  const merged = mergeCaseFields(existing, { ...EMPTY, incident_summary: "It was 50 cedis", amount: 50, fraud_category: "Other" }, { correction: true });
+
+  assert.equal(merged.fields.incident_summary, "Fake prize call");
+  assert.equal(merged.fields.fraud_category, "Impersonation");
+  assert.equal(merged.fields.amount, 50);
+});
+
+test("mergeCaseFields in correction mode keeps a stored value when the correction doesn't mention that field", () => {
+  const existing = { ...EMPTY, incident_summary: "s", amount: 500, incident_date: "Yesterday", fraud_category: "Phishing" };
+  const merged = mergeCaseFields(existing, { ...EMPTY, amount: 75 }, { correction: true });
+
+  assert.equal(merged.fields.incident_date, "Yesterday");
+  assert.equal(merged.fields.fraud_category, "Phishing");
+});
+
+test("getCasesForCustomer finds a customer's cases across phone formats, newest first, respecting the limit", () => {
+  const make = (contact, summary) => {
+    const merged = mergeCaseFields(EMPTY, { ...EMPTY, incident_summary: summary });
+    return createCase({ customer_contact: contact, channel: "whatsapp", input_mode: "text", caseFields: merged.fields, missing_fields: merged.missing_fields });
+  };
+  const first = make("233244900001", "first");
+  const second = make("0244900001", "second"); // same customer, different format
+  const third = make("+233244900001", "third");
+  make("233244900002", "someone else");
+
+  const found = getCasesForCustomer("233244900001", 10);
+  assert.deepEqual(found.map((c) => c.case_id), [third.case_id, second.case_id, first.case_id]);
+  assert.equal(getCasesForCustomer("0244900001", 2).length, 2);
+  assert.deepEqual(getCasesForCustomer("233244900099"), []);
+  assert.deepEqual(getCasesForCustomer(""), []);
+});
+
+test("audio transcripts are stored index-aligned with audio_refs across turns, and text turns add nothing", () => {
+  const merged1 = mergeCaseFields(EMPTY, { ...EMPTY, incident_summary: "first" });
+  const created = createCase({
+    customer_contact: "0244000555",
+    channel: "whatsapp",
+    input_mode: "voice",
+    caseFields: merged1.fields,
+    missing_fields: merged1.missing_fields,
+    audio_ref: "media-1",
+    transcript: "Nnora na wɔfaa me sika",
+  });
+  assert.deepEqual(created.audio_refs, ["media-1"]);
+  assert.deepEqual(created.audio_transcripts, ["Nnora na wɔfaa me sika"]);
+
+  const merged2 = mergeCaseFields(created, { ...EMPTY });
+  const afterText = updateCaseFields(created.case_id, merged2.fields, merged2.missing_fields, undefined, undefined, "text");
+  assert.deepEqual(afterText.audio_transcripts, ["Nnora na wɔfaa me sika"], "a typed turn must not add a phantom transcript");
+
+  const afterVoice = updateCaseFields(created.case_id, merged2.fields, merged2.missing_fields, "media-2", undefined, "voice", "second note");
+  assert.deepEqual(afterVoice.audio_refs, ["media-1", "media-2"]);
+  assert.deepEqual(afterVoice.audio_transcripts, ["Nnora na wɔfaa me sika", "second note"]);
 });
 
 test("getCaseForCustomer refuses to return a case to the wrong phone number", () => {

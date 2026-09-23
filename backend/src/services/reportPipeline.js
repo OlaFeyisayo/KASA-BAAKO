@@ -107,6 +107,9 @@ export function _lockMapSizeForTests() {
  *   channels/whatsapp.js's audio proxy route.
  * @param {boolean} [params.synthesizeConfirmation=true] - Set false for text-only
  *   channels (USSD) so we don't waste a Khaya TTS call on audio nobody can play.
+ * @param {boolean} [params.correction=false] - This message fixes details the
+ *   customer was just read back; new values replace stored ones (see
+ *   mergeCaseFields).
  * @returns {Promise<{
  *   case_id: string,
  *   case: object,
@@ -116,12 +119,13 @@ export function _lockMapSizeForTests() {
  *   alert: object|null
  * }>}
  */
-export async function processReport({ text, audioBuffer, contentType, customer_contact, channel, input_mode, case_id, language, audio_ref, synthesizeConfirmation = true }) {
+export async function processReport({ text, audioBuffer, contentType, customer_contact, channel, input_mode, case_id, language, audio_ref, synthesizeConfirmation = true, correction = false }) {
   if (!customer_contact || !channel || !input_mode) {
     throw new Error("customer_contact, channel, and input_mode are required");
   }
 
   let reportText = text;
+  let transcript = null;
   if (!reportText && audioBuffer) {
     // language was never passed here at all — every voice note (English
     // or Twi) was being transcribed with Khaya's default "twi" ASR model
@@ -132,6 +136,7 @@ export async function processReport({ text, audioBuffer, contentType, customer_c
       language: language === "english" ? "eng" : "twi",
     });
     reportText = transcription.text;
+    transcript = transcription.text;
   }
 
   if (!reportText) {
@@ -151,10 +156,10 @@ export async function processReport({ text, audioBuffer, contentType, customer_c
     existingCase = found;
   }
 
-  const merged = mergeCaseFields(existingCase, result.case);
+  const merged = mergeCaseFields(existingCase, result.case, { correction });
 
   const finalCase = case_id
-    ? updateCaseFields(case_id, merged.fields, merged.missing_fields, audio_ref, language === "english" ? "english" : "twi", input_mode)
+    ? updateCaseFields(case_id, merged.fields, merged.missing_fields, audio_ref, language === "english" ? "english" : "twi", input_mode, transcript)
     : createCase({
         customer_contact,
         channel,
@@ -163,6 +168,7 @@ export async function processReport({ text, audioBuffer, contentType, customer_c
         caseFields: merged.fields,
         missing_fields: merged.missing_fields,
         audio_ref,
+        transcript,
       });
 
   const followUpQuestions = Object.fromEntries(

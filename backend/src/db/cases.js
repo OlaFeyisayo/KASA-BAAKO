@@ -23,6 +23,7 @@ function toRow(caseObj) {
     ...caseObj,
     missing_fields: JSON.stringify(caseObj.missing_fields ?? []),
     audio_refs: JSON.stringify(caseObj.audio_refs ?? []),
+    audio_transcripts: JSON.stringify(caseObj.audio_transcripts ?? []),
     suspected_number_normalized: caseObj.suspected_number ? normalizePhoneNumber(caseObj.suspected_number) : null,
     suspected_email_normalized: caseObj.suspected_email ? normalizeEmail(caseObj.suspected_email) : null,
   };
@@ -34,6 +35,7 @@ function fromRow(row) {
     ...row,
     missing_fields: JSON.parse(row.missing_fields || "[]"),
     audio_refs: JSON.parse(row.audio_refs || "[]"),
+    audio_transcripts: JSON.parse(row.audio_transcripts || "[]"),
   };
 }
 
@@ -50,18 +52,20 @@ function fromRow(row) {
  * @param {string} [params.audio_ref] - A WhatsApp media id, if this first
  *   message was a voice note. Stored as the first entry of audio_refs —
  *   see updateCaseFields for how later voice notes get appended.
+ * @param {string} [params.transcript] - What that voice note said (ASR
+ *   output), stored alongside audio_ref at the same index.
  * @returns {object} The full stored case, including its case_id.
  */
 const INSERT_CASE_SQL = `INSERT INTO cases (
   case_id, customer_contact, channel, input_mode, language,
   incident_summary, incident_date, amount, fraud_category,
   suspected_number, suspected_number_normalized, suspected_email, suspected_email_normalized,
-  transaction_id, missing_fields, status, audio_refs
+  transaction_id, missing_fields, status, audio_refs, audio_transcripts
 ) VALUES (
   @case_id, @customer_contact, @channel, @input_mode, @language,
   @incident_summary, @incident_date, @amount, @fraud_category,
   @suspected_number, @suspected_number_normalized, @suspected_email, @suspected_email_normalized,
-  @transaction_id, @missing_fields, @status, @audio_refs
+  @transaction_id, @missing_fields, @status, @audio_refs, @audio_transcripts
 )`;
 
 const MAX_CASE_ID_ATTEMPTS = 5;
@@ -74,10 +78,12 @@ export function createCase({
   caseFields,
   missing_fields,
   audio_ref = null,
+  transcript = null,
   generateId = generateCaseId, // overridable in tests to force/prove collision retries
 }) {
   const status = "received";
   const audio_refs = audio_ref ? [audio_ref] : [];
+  const audio_transcripts = audio_ref ? [transcript ?? ""] : [];
 
   // generateCaseId() is random, not sequential — an ID collision is
   // possible (however unlikely) at high volume, and should never lose the
@@ -94,6 +100,7 @@ export function createCase({
           input_mode,
           language,
           audio_refs,
+          audio_transcripts,
           status,
           ...caseFields,
           missing_fields,
@@ -113,12 +120,24 @@ export function createCase({
  *
  * @param {object} existing - The stored case (as returned by fromRow).
  * @param {object} incoming - New field values from llm.js's buildCase().case.
+ * @param {object} [options]
+ * @param {boolean} [options.correction=false] - The customer is fixing
+ *   something they were just read back, so a newly-extracted value wins over
+ *   the stored one. Two exceptions: incident_summary stays as first written
+ *   (a short correction like "it was 500 cedis" would otherwise replace the
+ *   whole story with that fragment), and a category of "Other" never
+ *   replaces a real one (it's what the model falls back to when a fragment
+ *   gives it nothing to classify).
  * @returns {{ fields: object, missing_fields: string[] }}
  */
-export function mergeCaseFields(existing, incoming) {
+export function mergeCaseFields(existing, incoming, { correction = false } = {}) {
   const fields = {};
   for (const field of ["incident_summary", "incident_date", "amount", "fraud_category", "suspected_number", "suspected_email", "transaction_id"]) {
-    fields[field] = existing[field] ?? incoming[field] ?? null;
+    const incomingWins =
+      correction && field !== "incident_summary" && !(field === "fraud_category" && incoming[field] === "Other");
+    fields[field] = incomingWins
+      ? (incoming[field] ?? existing[field] ?? null)
+      : (existing[field] ?? incoming[field] ?? null);
   }
   const missing_fields = REQUIRED_FIELDS.filter((field) => fields[field] === null || fields[field] === undefined);
   return { fields, missing_fields };
@@ -149,11 +168,17 @@ export function mergeCaseFields(existing, incoming) {
  *   misleading picture (e.g. a case answered mostly by voice note but
  *   showing "text" because a short first message happened to be typed).
  *   Reflects the most recent turn rather than the first.
+ * @param {string} [transcript] - What this turn's voice note said. Only
+ *   stored when audioRef is also given, so audio_transcripts stays
+ *   index-aligned with audio_refs.
  * @returns {object} The updated case.
  */
-export function updateCaseFields(caseId, fields, missingFields, audioRef, language, inputMode) {
+export function updateCaseFields(caseId, fields, missingFields, audioRef, language, inputMode, transcript) {
   const existing = fromRow(db.prepare("SELECT * FROM cases WHERE case_id = ?").get(caseId));
   const audio_refs = audioRef ? [...(existing?.audio_refs ?? []), audioRef] : (existing?.audio_refs ?? []);
+  const audio_transcripts = audioRef
+    ? [...(existing?.audio_transcripts ?? []), transcript ?? ""]
+    : (existing?.audio_transcripts ?? []);
 
   db.prepare(
     `UPDATE cases SET
@@ -170,6 +195,7 @@ export function updateCaseFields(caseId, fields, missingFields, audioRef, langua
       transaction_id = @transaction_id,
       missing_fields = @missing_fields,
       audio_refs = @audio_refs,
+      audio_transcripts = @audio_transcripts,
       updated_at = datetime('now')
     WHERE case_id = @case_id`
   ).run(toRow({
@@ -179,6 +205,7 @@ export function updateCaseFields(caseId, fields, missingFields, audioRef, langua
     ...fields,
     missing_fields: missingFields,
     audio_refs,
+    audio_transcripts,
   }));
 
   return fromRow(db.prepare("SELECT * FROM cases WHERE case_id = ?").get(caseId));
@@ -276,6 +303,27 @@ export function getCasesBySuspectedEmail(normalizedEmail, excludeCaseId) {
     .prepare("SELECT * FROM cases WHERE suspected_email_normalized = ? AND case_id != ?")
     .all(normalizedEmail, excludeCaseId)
     .map(fromRow);
+}
+
+/**
+ * A customer's most recent cases, newest first — for the WhatsApp "My cases"
+ * button, so they can check status without typing or reading out a case
+ * number. Phone formats vary ("0244…", "233244…", "+233244…"), so this
+ * narrows in SQL by the normalized digits and then confirms the exact match.
+ *
+ * @param {string} customerContact
+ * @param {number} [limit=3]
+ * @returns {object[]}
+ */
+export function getCasesForCustomer(customerContact, limit = 3) {
+  const normalized = normalizePhoneNumber(customerContact);
+  if (!normalized) return [];
+  return db
+    .prepare("SELECT * FROM cases WHERE customer_contact LIKE ? ORDER BY created_at DESC, rowid DESC")
+    .all(`%${normalized}`)
+    .map(fromRow)
+    .filter((row) => normalizePhoneNumber(row.customer_contact) === normalized)
+    .slice(0, limit);
 }
 
 /**

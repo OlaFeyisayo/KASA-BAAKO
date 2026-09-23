@@ -30,6 +30,7 @@ if (casesTableExists) {
   const cols = db.prepare("PRAGMA table_info(cases)").all().map((c) => c.name);
   if (!cols.includes("suspected_email")) db.exec("ALTER TABLE cases ADD COLUMN suspected_email TEXT");
   if (!cols.includes("suspected_email_normalized")) db.exec("ALTER TABLE cases ADD COLUMN suspected_email_normalized TEXT");
+  if (!cols.includes("audio_transcripts")) db.exec("ALTER TABLE cases ADD COLUMN audio_transcripts TEXT NOT NULL DEFAULT '[]'");
 }
 
 db.exec(schema);

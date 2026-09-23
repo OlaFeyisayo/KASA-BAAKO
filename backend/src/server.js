@@ -6,6 +6,7 @@ import { processReport } from "./services/reportPipeline.js";
 import { getCaseForCustomer, getCaseById, updateCaseStatus, getAllCases } from "./db/cases.js";
 import { verifyWebhook, handleIncomingMessage, downloadWhatsAppMedia } from "./channels/whatsapp.js";
 import { handleUssdRequest } from "./channels/ussd.js";
+import { getPendingCallbackRequests, markCallbackDone } from "./db/callbacks.js";
 import { requireServiceApiKey, requireUssdWebhookToken } from "./services/auth.js";
 import { requireFirebaseAuth } from "./middleware/requireFirebaseAuth.js";
 import { verifyWhatsAppSignature } from "./middleware/verifySignature.js";
@@ -173,6 +174,19 @@ app.patch("/cases/:caseId/status", requireFirebaseAuth, (req, res) => {
   } catch (err) {
     res.status(400).json({ error: err.message });
   }
+});
+
+// For the MTN dashboard: customers who asked the bot for a call back
+// (e.g. it couldn't understand their voice note). Dashboard-only — these
+// carry customers' phone numbers.
+app.get("/callbacks", requireFirebaseAuth, (req, res) => {
+  res.json(getPendingCallbackRequests());
+});
+
+app.patch("/callbacks/:id/done", requireFirebaseAuth, (req, res) => {
+  const updated = markCallbackDone(Number(req.params.id));
+  if (!updated) return res.status(404).json({ error: "Callback request not found" });
+  res.json(updated);
 });
 
 // WhatsApp webhook (Meta verifies this URL with a GET, then POSTs incoming messages).

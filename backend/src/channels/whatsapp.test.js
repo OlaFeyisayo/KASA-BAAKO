@@ -1,6 +1,36 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { nextFollowUpQuestion, sendWhatsAppText, sendWhatsAppButtons, sendWhatsAppAudio, isDuplicateMessage } from "./whatsapp.js";
+import { nextFollowUpQuestion, sendWhatsAppText, sendWhatsAppButtons, sendWhatsAppAudio, isDuplicateMessage, spellOutCaseId } from "./whatsapp.js";
+
+// Read aloud by TTS for voice-reply customers. Khaya's voices turn numerals
+// and Latin letters into gibberish (found by round-tripping the audio through
+// Khaya's own speech recognition), but digits written as words come back
+// intact — so a case number is spoken as words, in groups of three.
+test("spellOutCaseId (English) writes digits as words, with the KB prefix as letter names", () => {
+  assert.equal(
+    spellOutCaseId("KB-481902773506", "en"),
+    "kay bee. four, eight, one. nine, zero, two. seven, seven, three. five, zero, six"
+  );
+});
+
+test("spellOutCaseId (Twi) uses Twi digit words and leaves out the English-letter prefix", () => {
+  assert.equal(
+    spellOutCaseId("KB-481902773506", "tw"),
+    "ɛnan, nwɔtwe, baako. nkron, zero, mmienu. nson, nson, mmiɛnsa. enum, zero, nsia"
+  );
+});
+
+test("spellOutCaseId still handles an older hex-style id, so existing cases can be read out", () => {
+  const spoken = spellOutCaseId("kb-9ffd02555c53", "en");
+  assert.match(spoken, /^kay bee\. nine, eff, eff\. dee, zero, two\./);
+  assert.doesNotMatch(spoken, /\d/, "no numerals may reach the voice");
+});
+
+test("spellOutCaseId never leaves a numeral in either language", () => {
+  for (const lang of ["en", "tw"]) {
+    assert.doesNotMatch(spellOutCaseId("KB-0123456789AB", lang), /\d/);
+  }
+});
 
 // Found in production: a "restart" fired with no message from the
 // customer, ~13 minutes after they'd already received a case number.

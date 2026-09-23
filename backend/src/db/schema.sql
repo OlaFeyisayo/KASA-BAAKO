@@ -27,6 +27,11 @@ CREATE TABLE IF NOT EXISTS cases (
   -- just the most recent one. See db/connection.js for the migration from
   -- the older single-value `audio_ref` column this replaced.
   audio_refs TEXT NOT NULL DEFAULT '[]',
+  -- A JSON array of ASR transcripts, index-aligned with audio_refs (entry N
+  -- is what was said in voice note N). Kept so staff can read what was said
+  -- (accessibility for hard-of-hearing staff) and still can once WhatsApp's
+  -- media for that voice note has expired.
+  audio_transcripts TEXT NOT NULL DEFAULT '[]',
   created_at TEXT NOT NULL DEFAULT (datetime('now')),
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
@@ -42,6 +47,19 @@ CREATE INDEX IF NOT EXISTS idx_cases_status ON cases (status);
 
 -- Dashboard login sessions. Stored here (not an in-memory Map) so staff
 -- stay logged in across a backend restart — the whole point of this table.
+-- "Call me back" requests from the WhatsApp bot — the human fallback for
+-- customers the voice/ASR pipeline can't serve (speech impairments, strong
+-- accents, a recording it couldn't understand). Separate from `cases`
+-- because a customer can ask before they've got a case at all.
+CREATE TABLE IF NOT EXISTS callback_requests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  customer_contact TEXT NOT NULL,
+  language TEXT NOT NULL DEFAULT 'twi',
+  status TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'done')),
+  created_at TEXT NOT NULL DEFAULT (datetime('now')),
+  resolved_at TEXT
+);
+
 CREATE TABLE IF NOT EXISTS sessions (
   token TEXT PRIMARY KEY,
   expires_at INTEGER NOT NULL

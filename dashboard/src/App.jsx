@@ -9,6 +9,7 @@ import SummaryCard from './components/SummaryCard'
 import Filters from './components/Filters'
 import CasesTable from './components/CasesTable'
 import CaseDetailsModal from './components/CaseDetailsModal'
+import CallbackRequests from './components/CallbackRequests'
 import { FileText, Inbox, Eye, CheckCircle2 } from 'lucide-react'
 
 function App() {
@@ -176,6 +177,8 @@ function App() {
               {loadError}
             </div>
           )}
+
+          <CallbackRequests token={token} onSessionExpired={handleSessionExpired} />
 
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
             <SummaryCard label="Total Cases" count={totalCases} icon={FileText} iconBg="bg-slate-100 dark:bg-slate-800" iconColor="text-slate-600 dark:text-slate-300" />

@@ -216,6 +216,12 @@ function CaseDetailsModal({ caseData, onClose, onStatusChange, token, isFraudAle
                   {clip.state === 'none' && (
                     <p className="text-slate-400 italic text-sm">Recording no longer available.</p>
                   )}
+                  {caseData.audio_transcripts?.[index] && (
+                    <div className="mt-2 bg-slate-50 dark:bg-slate-800 rounded-xl p-3 text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
+                      <p className="text-xs text-slate-400 mb-1">Transcript (as spoken)</p>
+                      {caseData.audio_transcripts[index]}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
