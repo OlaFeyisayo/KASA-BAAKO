@@ -1,0 +1,204 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>KasaBaako — USSD Simulator (local)</title>
+<style>
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+    background: #1b1f24;
+    color: #e6e6e6;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 32px 16px;
+  }
+  h1 { font-size: 18px; margin-bottom: 4px; }
+  p.sub { color: #9aa4af; font-size: 13px; margin-top: 0; margin-bottom: 20px; }
+
+  .config {
+    width: 320px;
+    margin-bottom: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+  .config label { font-size: 12px; color: #9aa4af; }
+  .config input {
+    padding: 8px;
+    border-radius: 6px;
+    border: 1px solid #3a4048;
+    background: #11151a;
+    color: #e6e6e6;
+    font-size: 13px;
+  }
+
+  .phone {
+    width: 320px;
+    background: #000;
+    border-radius: 28px;
+    padding: 18px;
+    box-shadow: 0 0 0 6px #2a2f36, 0 10px 30px rgba(0,0,0,0.5);
+  }
+  .screen-label {
+    color: #6fcf97;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.08em;
+    margin-bottom: 6px;
+  }
+  .screen {
+    background: #cce8d4;
+    color: #0b2e1a;
+    min-height: 220px;
+    border-radius: 6px;
+    padding: 14px;
+    font-family: "Courier New", monospace;
+    font-size: 14px;
+    white-space: pre-wrap;
+    line-height: 1.5;
+  }
+  .screen.ended { background: #e8cccc; color: #3a0b0b; }
+
+  form { width: 320px; margin-top: 14px; display: flex; gap: 8px; }
+  input[type="text"] {
+    flex: 1;
+    padding: 10px;
+    border-radius: 6px;
+    border: 1px solid #3a4048;
+    background: #11151a;
+    color: #ffd166;
+    font-size: 14px;
+  }
+  input[type="text"]::placeholder { color: #6b7280; }
+  button {
+    padding: 10px 16px;
+    border-radius: 6px;
+    border: none;
+    background: #ffcc00;
+    color: #1b1f24;
+    font-weight: 700;
+    cursor: pointer;
+  }
+  button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .you-typed { color: #ffd166; font-size: 12px; margin-top: 8px; width: 320px; }
+
+  .restart {
+    margin-top: 10px;
+    background: transparent;
+    border: 1px solid #3a4048;
+    color: #9aa4af;
+    width: 320px;
+  }
+  .error { color: #ff6b6b; font-size: 12px; margin-top: 8px; width: 320px; }
+</style>
+</head>
+<body>
+  <h1>KasaBaako — USSD Simulator</h1>
+  <p class="sub">Talks to your local backend exactly like Africa's Talking would.</p>
+
+  <div class="config">
+    <label for="baseUrl">Backend URL</label>
+    <input id="baseUrl" type="text" value="http://localhost:3000" />
+    <label for="token">USSD_WEBHOOK_TOKEN (from your .env)</label>
+    <input id="token" type="text" placeholder="paste the token here" />
+    <label for="phone">Simulated phone number</label>
+    <input id="phone" type="text" value="+233200000001" />
+  </div>
+
+  <div class="phone">
+    <div class="screen-label">PHONE SCREEN</div>
+    <div class="screen" id="screen">Press "Dial" to start a session.</div>
+  </div>
+
+  <form id="inputForm">
+    <input id="userInput" type="text" placeholder="Type your reply..." disabled />
+    <button type="submit" id="sendBtn" disabled>Send</button>
+  </form>
+  <div class="you-typed" id="youTyped"></div>
+  <div class="error" id="errorBox"></div>
+
+  <button class="restart" id="dialBtn">Dial *920# (start new session)</button>
+
+  <script>
+    const screenEl = document.getElementById("screen");
+    const inputEl = document.getElementById("userInput");
+    const sendBtn = document.getElementById("sendBtn");
+    const dialBtn = document.getElementById("dialBtn");
+    const youTypedEl = document.getElementById("youTyped");
+    const errorBox = document.getElementById("errorBox");
+    const baseUrlEl = document.getElementById("baseUrl");
+    const tokenEl = document.getElementById("token");
+    const phoneEl = document.getElementById("phone");
+
+    let sessionId = null;
+    let history = []; // accumulated answers, joined with "*" (Africa's Talking format)
+    let ended = true;
+
+    function setScreen(text, isEnd) {
+      screenEl.textContent = text;
+      screenEl.classList.toggle("ended", !!isEnd);
+    }
+
+    async function sendToBackend() {
+      errorBox.textContent = "";
+      const base = baseUrlEl.value.replace(/\/$/, "");
+      const token = tokenEl.value.trim();
+      if (!token) {
+        errorBox.textContent = "Paste your USSD_WEBHOOK_TOKEN above first.";
+        return;
+      }
+      const body = new URLSearchParams({
+        sessionId,
+        phoneNumber: phoneEl.value,
+        networkCode: "SIM",
+        serviceCode: "*920#",
+        text: history.join("*"),
+      });
+
+      try {
+        const res = await fetch(`${base}/webhooks/ussd?token=${encodeURIComponent(token)}`, {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body,
+        });
+        const raw = await res.text();
+        if (!res.ok) {
+          errorBox.textContent = `Backend error (${res.status}): ${raw}`;
+          return;
+        }
+        const isEnd = raw.startsWith("END ");
+        const message = raw.replace(/^(CON|END)\s/, "");
+        setScreen(message, isEnd);
+        ended = isEnd;
+        inputEl.disabled = isEnd;
+        sendBtn.disabled = isEnd;
+        if (!isEnd) inputEl.focus();
+      } catch (err) {
+        errorBox.textContent = `Could not reach backend at ${base}. Is it running? (${err.message})`;
+      }
+    }
+
+    dialBtn.addEventListener("click", () => {
+      sessionId = "sim-" + Date.now();
+      history = [];
+      ended = false;
+      youTypedEl.textContent = "";
+      errorBox.textContent = "";
+      inputEl.disabled = false;
+      sendBtn.disabled = false;
+      sendToBackend();
+    });
+
+    document.getElementById("inputForm").addEventListener("submit", (e) => {
+      e.preventDefault();
+      if (ended || !inputEl.value.trim()) return;
+      history.push(inputEl.value.trim());
+      youTypedEl.textContent = `YOU TYPED → ${inputEl.value.trim()}`;
+      inputEl.value = "";
+      sendToBackend();
+    });
+  </script>
+</body>
+</html>
