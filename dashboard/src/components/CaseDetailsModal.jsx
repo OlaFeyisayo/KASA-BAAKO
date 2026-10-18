@@ -69,14 +69,14 @@ function CaseDetailsModal({ caseData, onClose, onStatusChange, token }) {
   if (!caseData) return null
 
   return (
-    <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50">
+    <div className="fixed inset-0 bg-black/50 flex items-center justify-center p-4 z-50 animate-fade-in">
       <div
         ref={modalRef}
         tabIndex={-1}
         role="dialog"
         aria-modal="true"
         aria-labelledby="case-modal-title"
-        className="bg-white dark:bg-slate-800 rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto outline-none"
+        className="animate-modal-in bg-white dark:bg-slate-800 rounded-lg shadow-xl max-w-2xl w-full max-h-[90vh] overflow-y-auto outline-none"
       >
         <div className="flex justify-between items-center border-b border-slate-200 dark:border-slate-700 px-6 py-4">
           <h2 id="case-modal-title" className="text-lg font-bold text-slate-800 dark:text-slate-100">

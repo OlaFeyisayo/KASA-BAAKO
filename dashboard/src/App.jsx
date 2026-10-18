@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { fetchCases, updateCaseStatus, logout as apiLogout } from './api'
 import Login from './components/Login'
 import SummaryCard from './components/SummaryCard'
@@ -36,6 +36,8 @@ function App() {
   const [categoryFilter, setCategoryFilter] = useState('all')
   const [searchQuery, setSearchQuery] = useState('')
   const [sortConfig, setSortConfig] = useState({ key: null, direction: 'asc' })
+  const [newCaseIds, setNewCaseIds] = useState(() => new Set())
+  const knownCaseIds = useRef(null)
 
   useEffect(() => {
     document.documentElement.classList.toggle('dark', darkMode)
@@ -55,6 +57,20 @@ function App() {
     setLoadError('')
     try {
       const data = await fetchCases(activeToken)
+      // Flag cases that weren't present on the previous poll so the table can
+      // briefly highlight them — makes a live incoming report visible instead
+      // of silently appearing in the list. Skipped on the very first load
+      // (knownCaseIds still null) so the whole table doesn't flash on login.
+      if (knownCaseIds.current) {
+        const freshIds = data
+          .map(c => c.case_id)
+          .filter(id => !knownCaseIds.current.has(id))
+        if (freshIds.length > 0) {
+          setNewCaseIds(new Set(freshIds))
+          setTimeout(() => setNewCaseIds(new Set()), 2200)
+        }
+      }
+      knownCaseIds.current = new Set(data.map(c => c.case_id))
       setCases(data)
     } catch (err) {
       if (err.code === 'UNAUTHORIZED') {
@@ -164,13 +180,16 @@ function App() {
     <div className="min-h-screen bg-slate-50 dark:bg-slate-900">
       <header className="bg-white dark:bg-slate-800 border-b border-slate-200 dark:border-slate-700 shadow-sm">
         <div className="max-w-7xl mx-auto px-6 py-4 flex justify-between items-center">
-          <div>
-            <h1 className="text-2xl font-bold text-slate-800 dark:text-slate-100">
-              MTN Fraud Case Management Dashboard
-            </h1>
-            <p className="text-slate-500 dark:text-slate-400 mt-1">
-              View, filter, and manage reported fraud cases
-            </p>
+          <div className="flex items-center gap-3">
+            <span className="w-2.5 h-9 rounded-full bg-yellow-400 shrink-0" aria-hidden="true" />
+            <div>
+              <h1 className="text-2xl font-bold text-slate-800 dark:text-slate-100">
+                MTN Fraud Case Management Dashboard
+              </h1>
+              <p className="text-slate-500 dark:text-slate-400 mt-1">
+                View, filter, and manage reported fraud cases
+              </p>
+            </div>
           </div>
           <div className="flex items-center gap-2">
             <button
@@ -197,10 +216,10 @@ function App() {
         )}
 
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-          <SummaryCard label="Total Cases" count={totalCases} accentColor="text-slate-800 dark:text-slate-100" />
-          <SummaryCard label="Received" count={receivedCount} accentColor="text-yellow-600" />
-          <SummaryCard label="Under Review" count={underReviewCount} accentColor="text-blue-600" />
-          <SummaryCard label="Resolved" count={resolvedCount} accentColor="text-green-600" />
+          <SummaryCard label="Total Cases" count={totalCases} accentColor="text-slate-800 dark:text-slate-100" icon="total" index={0} />
+          <SummaryCard label="Received" count={receivedCount} accentColor="text-yellow-600" icon="received" index={1} />
+          <SummaryCard label="Under Review" count={underReviewCount} accentColor="text-blue-600" icon="review" index={2} />
+          <SummaryCard label="Resolved" count={resolvedCount} accentColor="text-green-600" icon="resolved" index={3} />
         </div>
 
         <Filters
@@ -213,13 +232,18 @@ function App() {
         />
 
         {loading ? (
-          <p className="mt-8 text-slate-500 dark:text-slate-400 text-sm">Loading cases…</p>
+          <div className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 shadow-sm mt-6 p-4 space-y-3" aria-busy="true" aria-label="Loading cases">
+            {[0, 1, 2, 3, 4].map(i => (
+              <div key={i} className="skeleton-shimmer h-5 rounded bg-slate-100 dark:bg-slate-700" style={{ width: `${92 - i * 6}%` }} />
+            ))}
+          </div>
         ) : (
           <CasesTable
             cases={sortedCases}
             onViewDetails={setSelectedCase}
             sortConfig={sortConfig}
             onSort={handleSort}
+            newCaseIds={newCaseIds}
           />
         )}
       </main>

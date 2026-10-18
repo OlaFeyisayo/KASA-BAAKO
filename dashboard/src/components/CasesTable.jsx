@@ -17,7 +17,7 @@ function SortableHeader({ label, sortKey, sortConfig, onSort }) {
   )
 }
 
-function CasesTable({ cases, onViewDetails, sortConfig, onSort }) {
+function CasesTable({ cases, onViewDetails, sortConfig, onSort, newCaseIds }) {
   if (cases.length === 0) {
     return (
       <div className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 shadow-sm mt-6 p-10 text-center">
@@ -44,7 +44,10 @@ function CasesTable({ cases, onViewDetails, sortConfig, onSort }) {
         </thead>
         <tbody className="divide-y divide-slate-100 dark:divide-slate-700">
           {cases.map((c) => (
-            <tr key={c.case_id} className="hover:bg-slate-50 dark:hover:bg-slate-700">
+            <tr
+              key={c.case_id}
+              className={`hover:bg-slate-50 dark:hover:bg-slate-700 transition-colors ${newCaseIds?.has(c.case_id) ? 'animate-row-flash' : ''}`}
+            >
               <td className="px-4 py-3 font-medium text-slate-800 dark:text-slate-100">{c.case_id}</td>
               <td className="px-4 py-3 text-slate-700 dark:text-slate-300">{c.customer_contact}</td>
               <td className="px-4 py-3 capitalize text-slate-700 dark:text-slate-300">{c.channel}</td>

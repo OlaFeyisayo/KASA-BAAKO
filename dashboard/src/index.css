@@ -1,2 +1,50 @@
 @import "tailwindcss";
 @custom-variant dark (&:where(.dark, .dark *));
+
+@media (prefers-reduced-motion: no-preference) {
+  @keyframes kpi-in {
+    from { opacity: 0; transform: translateY(8px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+  .animate-kpi-in { animation: kpi-in 0.45s cubic-bezier(.16,1,.3,1) both; }
+
+  @keyframes row-flash {
+    0% { background-color: color-mix(in srgb, var(--color-green-500) 20%, transparent); }
+    100% { background-color: transparent; }
+  }
+  .animate-row-flash { animation: row-flash 2.2s ease-out; }
+
+  @keyframes shimmer {
+    from { transform: translateX(-100%); }
+    to { transform: translateX(100%); }
+  }
+  .skeleton-shimmer {
+    position: relative;
+    overflow: hidden;
+  }
+  .skeleton-shimmer::after {
+    content: "";
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent, color-mix(in srgb, currentColor 12%, transparent), transparent);
+    animation: shimmer 1.4s infinite;
+  }
+
+  @keyframes modal-in {
+    from { opacity: 0; transform: scale(0.96) translateY(6px); }
+    to { opacity: 1; transform: scale(1) translateY(0); }
+  }
+  .animate-modal-in { animation: modal-in 200ms cubic-bezier(.16,1,.3,1) both; }
+
+  @keyframes fade-in {
+    from { opacity: 0; }
+    to { opacity: 1; }
+  }
+  .animate-fade-in { animation: fade-in 160ms ease both; }
+
+  @keyframes dot-pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.4; }
+  }
+  .animate-dot-pulse { animation: dot-pulse 1.8s ease-in-out infinite; }
+}
