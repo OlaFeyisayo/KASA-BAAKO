@@ -5,6 +5,7 @@ import SummaryCard from './components/SummaryCard'
 import Filters from './components/Filters'
 import CasesTable from './components/CasesTable'
 import CaseDetailsModal from './components/CaseDetailsModal'
+import NumberCheck from './components/NumberCheck'
 
 const TOKEN_STORAGE_KEY = 'kasabaako_dashboard_token'
 
@@ -230,6 +231,8 @@ function App() {
           searchQuery={searchQuery}
           setSearchQuery={setSearchQuery}
         />
+
+        <NumberCheck token={token} onSessionExpired={handleSessionExpired} />
 
         {loading ? (
           <div className="bg-white dark:bg-slate-800 rounded-lg border border-slate-200 dark:border-slate-700 shadow-sm mt-6 p-4 space-y-3" aria-busy="true" aria-label="Loading cases">

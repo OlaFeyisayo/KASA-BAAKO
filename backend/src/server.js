@@ -2,11 +2,13 @@ import "dotenv/config";
 import express from "express";
 import cors from "cors";
 import { processReport } from "./services/reportPipeline.js";
-import { getCaseForCustomer, getCaseById, updateCaseStatus, getAllCases } from "./db/cases.js";
+import { getCaseForCustomer, getCaseById, updateCaseStatus, getAllCases, getCasesBySuspectedNumber } from "./db/cases.js";
 import { verifyWebhook, handleIncomingMessage, downloadWhatsAppMedia } from "./channels/whatsapp.js";
 import { handleUssdRequest } from "./channels/ussd.js";
 import { login, logout, requireDashboardAuth, requireServiceApiKey, requireUssdWebhookToken } from "./services/auth.js";
 import { verifyWhatsAppSignature } from "./middleware/verifySignature.js";
+import { normalizePhoneNumber } from "./utils/phone.js";
+import { MTN_ESCALATION_THRESHOLD } from "./services/alerts.js";
 
 const app = express();
 app.use(cors({ origin: process.env.DASHBOARD_ORIGIN || "*" }));
@@ -95,6 +97,24 @@ app.post("/auth/logout", requireDashboardAuth, (req, res) => {
 // one response), so it requires a valid dashboard session.
 app.get("/cases", requireDashboardAuth, (req, res) => {
   res.json(getAllCases());
+});
+
+// For the MTN dashboard: look up how many times a phone number has been
+// named as a suspect. Agent-only — customers don't get this through any
+// channel; it's for staff deciding whether a number warrants a mass alert,
+// same threshold alerts.js already uses internally (see shouldEscalateToMTN).
+app.get("/cases/check-number", requireDashboardAuth, (req, res) => {
+  const { number } = req.query;
+  if (!number) {
+    return res.status(400).json({ error: "number query parameter is required" });
+  }
+  const matches = getCasesBySuspectedNumber(normalizePhoneNumber(number), "");
+  res.json({
+    number,
+    report_count: matches.length,
+    high_alert: matches.length >= MTN_ESCALATION_THRESHOLD,
+    cases: matches.map((c) => ({ case_id: c.case_id, created_at: c.created_at, status: c.status })),
+  });
 });
 
 // Secure case status lookup — requires the requester's phone to match the

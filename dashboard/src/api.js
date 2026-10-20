@@ -59,6 +59,21 @@ export async function fetchCaseAudioUrl(token, caseId) {
   return URL.createObjectURL(blob)
 }
 
+// Agent-only lookup: how many times has this phone number been named as a
+// suspect across all stored cases.
+export async function checkNumber(token, number) {
+  const res = await fetch(`${API_BASE}/cases/check-number?number=${encodeURIComponent(number)}`, {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (res.status === 401) {
+    const err = new Error('Session expired')
+    err.code = 'UNAUTHORIZED'
+    throw err
+  }
+  if (!res.ok) throw new Error('Failed to check this number')
+  return res.json()
+}
+
 export async function updateCaseStatus(token, caseId, status) {
   const res = await fetch(`${API_BASE}/cases/${encodeURIComponent(caseId)}/status`, {
     method: 'PATCH',

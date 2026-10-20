@@ -13,11 +13,9 @@
 // Issues along the way (see middleware/verifySignature.js + server.js).
 
 import { processReport, withCustomerLock } from "../services/reportPipeline.js";
-import { getCaseForCustomer, getOpenCaseForCustomer, getCasesBySuspectedNumber } from "../db/cases.js";
+import { getCaseForCustomer, getOpenCaseForCustomer } from "../db/cases.js";
 import { REQUIRED_FIELDS } from "../services/llm.js";
 import { synthesizeSpeech } from "../services/tts.js";
-import { normalizePhoneNumber } from "../utils/phone.js";
-import { MTN_ESCALATION_THRESHOLD } from "../services/alerts.js";
 
 const GRAPH_API_VERSION = "v21.0";
 const CASE_ID_PATTERN = /^KB-[0-9A-F]{12}$/i;
@@ -173,13 +171,6 @@ const TEXT = {
     askSuspectedNumber: "Do you have the phone number the fraudster used? If you don't know it, just reply \"unknown\".",
     confirmation: (id) => `Thank you. Your case number is ${id}. We've recorded your report.`,
     restarted: "Okay, let's start over.",
-    numberCheckInvalid: 'Please include the phone number to check, e.g. "check 0551234567".',
-    numberCheckResult: (number, count) =>
-      count === 0
-        ? `No fraud reports found for ${number}.`
-        : `${number} has been reported ${count} time${count === 1 ? "" : "s"} for fraud in the last 30 days.${
-            count >= MTN_ESCALATION_THRESHOLD ? " ⚠️ This number has crossed our high-alert threshold — please be cautious." : ""
-          }`,
   },
   tw: {
     languageAck: "Ɛyɛ — yɛbɛkɔ so wɔ Twi mu.\n\nFa wo nne kyerɛ anaasɛ kyerɛw wo amanneɛbɔ, bere biara a wobɛpɛ.",
@@ -191,13 +182,6 @@ const TEXT = {
     askSuspectedNumber: "Wowɔ telefon nɔma a nsisifoɔ no de yɛɛ eyi? Sɛ wonnim a, kyerɛw \"unknown\".",
     confirmation: (id) => `Meda wo ase. Wo case number ne ${id}. Yɛasie wo amanneɛbɔ no.`,
     restarted: "Ɛyɛ, momma yɛnhyɛ aseɛ bio.",
-    numberCheckInvalid: 'Yɛsrɛ wo, fa telefon nɔma a wopɛ sɛ yɛhwɛ ka ho, see: "check 0551234567".',
-    numberCheckResult: (number, count) =>
-      count === 0
-        ? `Yɛanhu amaneɛbɔ biara a ɛfa ${number} ho.`
-        : `Wɔabɔ amaneɛ afa ${number} ho mpɛn ${count} wɔ nnafua 30 a atwam no mu.${
-            count >= MTN_ESCALATION_THRESHOLD ? " ⚠️ Saa nɔma yi adu gyinabea a ɛho hia naayɛ yiye — hwɛ yie." : ""
-          }`,
   },
 };
 
@@ -327,22 +311,6 @@ export async function handleIncomingMessage(req, res) {
 
     if (message.type === "text") {
       const body = typedText;
-
-      // "check <number>" — lets a customer ask whether a number has been
-      // reported enough times to be flagged, using the same matching logic
-      // alerts.js already runs internally when a new case comes in.
-      const checkMatch = body.match(/^check\s+(.+)$/i);
-      if (checkMatch) {
-        const rawNumber = checkMatch[1].trim();
-        const normalizedNumber = normalizePhoneNumber(rawNumber);
-        if (!normalizedNumber) {
-          await sendWhatsAppText(from, t.numberCheckInvalid);
-          return;
-        }
-        const matches = getCasesBySuspectedNumber(normalizedNumber, "");
-        await sendWhatsAppText(from, t.numberCheckResult(rawNumber, matches.length));
-        return;
-      }
 
       if (CASE_ID_PATTERN.test(body)) {
         const found = getCaseForCustomer(body.toUpperCase(), from);
