@@ -528,10 +528,21 @@ export function nextFollowUpQuestion(missingFields, followUpQuestions, lang) {
 // stuck on) carries a Restart button — otherwise handleIncomingMessage's
 // restart handling exists but is never actually reachable, since nothing
 // ever shows the customer that it's an option.
+//
+// Voice-mode customers are the one exception: plain text only, no buttons.
+// Testing with blind students at Akropong School for the Blind found the
+// on-screen keyboard kept popping up while they tried to record a voice
+// note, on both TalkBack (Android) and VoiceOver (iPhone) — right after a
+// button message like this one. Typing "restart" still works with no
+// button shown (see handleIncomingMessage), and a voice-mode customer
+// wasn't going to reliably tap a small button anyway.
 async function sendWithRestart(to, lang, bodyText, { spoken = true, speech, extraButtons = [] } = {}) {
-  const speechText = spoken && voiceReplyByCustomer.has(to) ? (speech ?? bodyText) : null;
+  const inVoiceMode = voiceReplyByCustomer.has(to);
+  const speechText = spoken && inVoiceMode ? (speech ?? bodyText) : null;
   await sendTextThenSpeech(to, lang, speechText, () =>
-    sendWhatsAppButtons(to, bodyText, [...TEXT[lang].restartButton, ...extraButtons])
+    inVoiceMode
+      ? sendWhatsAppText(to, bodyText)
+      : sendWhatsAppButtons(to, bodyText, [...TEXT[lang].restartButton, ...extraButtons])
   );
 }
 
