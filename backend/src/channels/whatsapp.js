@@ -13,8 +13,11 @@
 // Issues along the way (see middleware/verifySignature.js + server.js).
 
 import { processReport, withCustomerLock } from "../services/reportPipeline.js";
-import { getCaseForCustomer, getOpenCaseForCustomer } from "../db/cases.js";
+import { getCaseForCustomer, getOpenCaseForCustomer, getCasesBySuspectedNumber } from "../db/cases.js";
 import { REQUIRED_FIELDS } from "../services/llm.js";
+import { synthesizeSpeech } from "../services/tts.js";
+import { normalizePhoneNumber } from "../utils/phone.js";
+import { MTN_ESCALATION_THRESHOLD } from "../services/alerts.js";
 
 const GRAPH_API_VERSION = "v21.0";
 const CASE_ID_PATTERN = /^KB-[0-9A-F]{12}$/i;
@@ -170,6 +173,13 @@ const TEXT = {
     askSuspectedNumber: "Do you have the phone number the fraudster used? If you don't know it, just reply \"unknown\".",
     confirmation: (id) => `Thank you. Your case number is ${id}. We've recorded your report.`,
     restarted: "Okay, let's start over.",
+    numberCheckInvalid: 'Please include the phone number to check, e.g. "check 0551234567".',
+    numberCheckResult: (number, count) =>
+      count === 0
+        ? `No fraud reports found for ${number}.`
+        : `${number} has been reported ${count} time${count === 1 ? "" : "s"} for fraud in the last 30 days.${
+            count >= MTN_ESCALATION_THRESHOLD ? " ⚠️ This number has crossed our high-alert threshold — please be cautious." : ""
+          }`,
   },
   tw: {
     languageAck: "Ɛyɛ — yɛbɛkɔ so wɔ Twi mu.\n\nFa wo nne kyerɛ anaasɛ kyerɛw wo amanneɛbɔ, bere biara a wobɛpɛ.",
@@ -181,6 +191,13 @@ const TEXT = {
     askSuspectedNumber: "Wowɔ telefon nɔma a nsisifoɔ no de yɛɛ eyi? Sɛ wonnim a, kyerɛw \"unknown\".",
     confirmation: (id) => `Meda wo ase. Wo case number ne ${id}. Yɛasie wo amanneɛbɔ no.`,
     restarted: "Ɛyɛ, momma yɛnhyɛ aseɛ bio.",
+    numberCheckInvalid: 'Yɛsrɛ wo, fa telefon nɔma a wopɛ sɛ yɛhwɛ ka ho, see: "check 0551234567".',
+    numberCheckResult: (number, count) =>
+      count === 0
+        ? `Yɛanhu amaneɛbɔ biara a ɛfa ${number} ho.`
+        : `Wɔabɔ amaneɛ afa ${number} ho mpɛn ${count} wɔ nnafua 30 a atwam no mu.${
+            count >= MTN_ESCALATION_THRESHOLD ? " ⚠️ Saa nɔma yi adu gyinabea a ɛho hia naayɛ yiye — hwɛ yie." : ""
+          }`,
   },
 };
 
@@ -204,11 +221,38 @@ export function nextFollowUpQuestion(missingFields, followUpQuestions, lang) {
   return followUpQuestions[nextField];
 }
 
+// Plain text, not WhatsApp's interactive "quick reply" buttons (which this
+// message used to use) — testing with blind students at Akropong School for
+// the Blind found that the on-screen keyboard kept popping up while they
+// tried to record a voice note, on both TalkBack (Android) and VoiceOver
+// (iPhone). This was the only interactive (non-plain-text) message in the
+// whole flow, and both screen readers are known to struggle exposing
+// WhatsApp's custom quick-reply buttons, often falling back to showing the
+// keyboard as a workaround — the likely trigger. Keeping every bot message
+// as plain text removes that one candidate entirely.
 async function sendLanguageChoice(to) {
-  await sendWhatsAppButtons(to, "Welcome 👋 / Akwaaba 👋\n\nPlease choose your language:\nMesrɛ wo paw wo kasa:", [
-    { id: "lang_en", title: "English" },
-    { id: "lang_tw", title: "Twi" },
-  ]);
+  await sendWhatsAppText(
+    to,
+    'Welcome 👋 / Akwaaba 👋\n\nReply "English" or "Twi" to choose your language.\nMesrɛ wo, fa "English" anaa "Twi" kyerɛ wo kasa a wopɛ.'
+  );
+}
+
+/** Maps our internal lang code to the ISO 639-3 code Khaya's TTS API expects. */
+function khayaLanguage(lang) {
+  return lang === "en" ? "eng" : "twi";
+}
+
+// Speaks a bot prompt back to a customer who is reporting by voice — a
+// Khaya TTS failure (same risk as the final confirmation's, see
+// reportPipeline.js) must never block the text reply that already went
+// out, so this always runs after sendWhatsAppText and only logs on failure.
+async function sendSpokenReply(to, text, lang) {
+  try {
+    const audio = await synthesizeSpeech(text, { language: khayaLanguage(lang), format: "mp3" });
+    await sendWhatsAppAudio(to, audio);
+  } catch (err) {
+    console.error("[whatsapp] follow-up TTS failed, continuing text-only:", err);
+  }
 }
 
 /**
@@ -222,20 +266,12 @@ export async function handleIncomingMessage(req, res) {
   if (!message) return; // not an incoming message (e.g. a status update)
 
   const from = message.from;
-  const buttonId = message.type === "interactive" ? message.interactive?.button_reply?.id : null;
 
   try {
-    // Language choice, and "restart" (typed or tapped), work at any point —
-    // they don't require or interrupt an in-progress report.
-    if (buttonId === "lang_en" || buttonId === "lang_tw") {
-      const lang = buttonId === "lang_tw" ? "tw" : "en";
-      languageByCustomer.set(from, lang);
-      await sendWhatsAppText(from, TEXT[lang].languageAck);
-      return;
-    }
-
+    // "Restart" (typed) works at any point — it doesn't require or
+    // interrupt an in-progress report.
     const typedText = message.type === "text" ? message.text.body.trim() : "";
-    if (buttonId === "restart" || typedText.toLowerCase() === "restart") {
+    if (typedText.toLowerCase() === "restart") {
       languageByCustomer.delete(from);
       const lang = getLanguage(from, null) || "en";
       await sendWhatsAppText(from, TEXT[lang].restarted);
@@ -246,6 +282,19 @@ export async function handleIncomingMessage(req, res) {
     const openCase = getOpenCaseForCustomer(from);
     let lang = getLanguage(from, openCase);
     if (!lang) {
+      // Language choice is now plain text (see sendLanguageChoice) —
+      // accept the reply here instead of expecting a button tap.
+      const normalized = typedText.toLowerCase();
+      if (message.type === "text" && (normalized === "english" || normalized === "en")) {
+        languageByCustomer.set(from, "en");
+        await sendWhatsAppText(from, TEXT.en.languageAck);
+        return;
+      }
+      if (message.type === "text" && (normalized === "twi" || normalized === "tw")) {
+        languageByCustomer.set(from, "tw");
+        await sendWhatsAppText(from, TEXT.tw.languageAck);
+        return;
+      }
       await sendLanguageChoice(from);
       return;
     }
@@ -278,6 +327,22 @@ export async function handleIncomingMessage(req, res) {
 
     if (message.type === "text") {
       const body = typedText;
+
+      // "check <number>" — lets a customer ask whether a number has been
+      // reported enough times to be flagged, using the same matching logic
+      // alerts.js already runs internally when a new case comes in.
+      const checkMatch = body.match(/^check\s+(.+)$/i);
+      if (checkMatch) {
+        const rawNumber = checkMatch[1].trim();
+        const normalizedNumber = normalizePhoneNumber(rawNumber);
+        if (!normalizedNumber) {
+          await sendWhatsAppText(from, t.numberCheckInvalid);
+          return;
+        }
+        const matches = getCasesBySuspectedNumber(normalizedNumber, "");
+        await sendWhatsAppText(from, t.numberCheckResult(rawNumber, matches.length));
+        return;
+      }
 
       if (CASE_ID_PATTERN.test(body)) {
         const found = getCaseForCustomer(body.toUpperCase(), from);
@@ -326,8 +391,12 @@ async function runReportTurn({ from, text, audioBuffer, contentType, input_mode,
   });
 
   if (result.missing_fields.length > 0) {
-    const question = nextFollowUpQuestion(result.missing_fields, result.follow_up_questions, lang);
-    await sendWhatsAppText(from, question || t.fallbackFollowUp);
+    const question = nextFollowUpQuestion(result.missing_fields, result.follow_up_questions, lang) || t.fallbackFollowUp;
+    await sendWhatsAppText(from, question);
+    // Spoken reply only for customers reporting by voice — a customer who's
+    // typing clearly has no trouble reading text, so don't force audio on
+    // them too.
+    if (input_mode === "voice") await sendSpokenReply(from, question, lang);
     return;
   }
 
@@ -339,6 +408,7 @@ async function runReportTurn({ from, text, audioBuffer, contentType, input_mode,
   if (!skipNumberFollowUp && !result.case.suspected_number) {
     pendingNumberFollowUp.set(from, result.case_id);
     await sendWhatsAppText(from, t.askSuspectedNumber);
+    if (input_mode === "voice") await sendSpokenReply(from, t.askSuspectedNumber, lang);
     return;
   }
   pendingNumberFollowUp.delete(from);

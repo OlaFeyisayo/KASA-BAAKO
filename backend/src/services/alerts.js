@@ -5,7 +5,7 @@
 import { normalizePhoneNumber } from "../utils/phone.js";
 
 const MATCH_WINDOW_DAYS = 30;
-const MTN_ESCALATION_THRESHOLD = 5;
+export const MTN_ESCALATION_THRESHOLD = 5;
 
 /**
  * Finds existing cases that share the new case's suspected number and

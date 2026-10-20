@@ -160,7 +160,12 @@ export async function processReport({ text, audioBuffer, contentType, customer_c
         // 'audio/wav'") — mp3 is in that allowed list, so request that
         // instead. See channels/whatsapp.js's sendWhatsAppAudio, which
         // uploads whatever format this produces.
-        confirmationAudio = await synthesizeSpeech(finalCase.incident_summary, { format: "mp3" });
+        // finalCase.language is "twi" or "english" (see db/schema.sql); Khaya
+        // expects ISO 639-3 codes ("twi"/"eng") — this used to be left
+        // unset, which defaults to "twi" even for English-language cases,
+        // so an English customer's confirmation came back spoken in Twi.
+        const khayaLanguage = finalCase.language === "english" ? "eng" : "twi";
+        confirmationAudio = await synthesizeSpeech(finalCase.incident_summary, { format: "mp3", language: khayaLanguage });
       } catch (err) {
         console.error("[reportPipeline] TTS confirmation failed, continuing without audio:", err);
       }
