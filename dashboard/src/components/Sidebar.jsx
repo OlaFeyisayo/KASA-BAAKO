@@ -8,7 +8,7 @@ const navItems = [
   { label: 'Settings', icon: Settings },
 ]
 
-function Sidebar({ activeItem = 'Dashboard', alertCount = 0, staffName = 'MTN Staff', staffRole = 'Case Officer' }) {
+function Sidebar({ activeItem = 'Dashboard', onNavigate, alertCount = 0, staffName = 'MTN Staff', staffRole = 'Case Officer' }) {
   return (
     <aside className="w-56 shrink-0 bg-slate-900 dark:bg-black text-slate-300 flex flex-col h-screen sticky top-0 px-4 py-5">
       <div className="w-10 h-10 rounded-full border-2 border-yellow-400 flex items-center justify-center text-yellow-400 font-bold text-[10px] mb-4">
@@ -30,6 +30,8 @@ function Sidebar({ activeItem = 'Dashboard', alertCount = 0, staffName = 'MTN St
           return (
             <button
               key={label}
+              onClick={() => onNavigate?.(label)}
+              aria-current={isActive ? 'page' : undefined}
               className={`flex items-center justify-between px-3 py-2.5 rounded-lg text-sm font-medium transition-colors ${
                 isActive
                   ? 'bg-yellow-400 text-slate-900'

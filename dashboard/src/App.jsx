@@ -10,7 +10,11 @@ import Filters from './components/Filters'
 import CasesTable from './components/CasesTable'
 import CaseDetailsModal from './components/CaseDetailsModal'
 import CallbackRequests from './components/CallbackRequests'
-import { FileText, Inbox, Eye, CheckCircle2 } from 'lucide-react'
+import ReportsView from './components/ReportsView'
+import SettingsView from './components/SettingsView'
+import { FileText, Inbox, Eye, CheckCircle2, AlertTriangle } from 'lucide-react'
+
+const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:3000'
 
 function App() {
   // Firebase manages the actual sign-in state; `token` is just the current
@@ -20,6 +24,7 @@ function App() {
   const [authLoading, setAuthLoading] = useState(true)
   const [token, setToken] = useState(null)
   const [darkMode, setDarkMode] = useState(false)
+  const [activeView, setActiveView] = useState('Dashboard')
   const [cases, setCases] = useState([])
   const [loading, setLoading] = useState(false)
   const [loadError, setLoadError] = useState('')
@@ -115,9 +120,10 @@ function App() {
   }, {})
   const fraudNumbers = new Set(Object.keys(numberCounts).filter(n => numberCounts[n] > 1))
   const fraudEmails = new Set(Object.keys(emailCounts).filter(e => emailCounts[e] > 1))
-  const fraudAlertCount = cases.filter(c =>
+  const fraudCases = cases.filter(c =>
     fraudNumbers.has(c.suspected_number) || fraudEmails.has(c.suspected_email)
-  ).length
+  )
+  const fraudAlertCount = fraudCases.length
 
   async function handleStatusChange(caseId, newStatus) {
     const previousCases = cases
@@ -166,7 +172,7 @@ function App() {
 
   return (
     <div className="flex min-h-screen bg-slate-50 dark:bg-slate-950">
-      <Sidebar activeItem="Dashboard" alertCount={fraudAlertCount} />
+      <Sidebar activeItem={activeView} onNavigate={setActiveView} alertCount={fraudAlertCount} />
 
       <div className="flex-1 flex flex-col min-w-0">
         <TopBar darkMode={darkMode} setDarkMode={setDarkMode} alertCount={fraudAlertCount} onLogout={handleLogout} />
@@ -178,33 +184,94 @@ function App() {
             </div>
           )}
 
-          <CallbackRequests token={token} onSessionExpired={handleSessionExpired} />
+          {activeView === 'Dashboard' && (
+            <>
+              <CallbackRequests token={token} onSessionExpired={handleSessionExpired} />
 
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
-            <SummaryCard label="Total Cases" count={totalCases} icon={FileText} iconBg="bg-slate-100 dark:bg-slate-800" iconColor="text-slate-600 dark:text-slate-300" />
-            <SummaryCard label="Received" count={receivedCount} icon={Inbox} iconBg="bg-yellow-100 dark:bg-yellow-950" iconColor="text-yellow-600 dark:text-yellow-400" />
-            <SummaryCard label="Under Review" count={underReviewCount} icon={Eye} iconBg="bg-blue-100 dark:bg-blue-950" iconColor="text-blue-600 dark:text-blue-400" />
-            <SummaryCard label="Resolved" count={resolvedCount} icon={CheckCircle2} iconBg="bg-green-100 dark:bg-green-950" iconColor="text-green-600 dark:text-green-400" />
-          </div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 mb-6">
+                <SummaryCard label="Total Cases" count={totalCases} icon={FileText} iconBg="bg-slate-100 dark:bg-slate-800" iconColor="text-slate-600 dark:text-slate-300" />
+                <SummaryCard label="Received" count={receivedCount} icon={Inbox} iconBg="bg-yellow-100 dark:bg-yellow-950" iconColor="text-yellow-600 dark:text-yellow-400" />
+                <SummaryCard label="Under Review" count={underReviewCount} icon={Eye} iconBg="bg-blue-100 dark:bg-blue-950" iconColor="text-blue-600 dark:text-blue-400" />
+                <SummaryCard label="Resolved" count={resolvedCount} icon={CheckCircle2} iconBg="bg-green-100 dark:bg-green-950" iconColor="text-green-600 dark:text-green-400" />
+              </div>
 
-          <Filters
-            statusFilter={statusFilter}
-            setStatusFilter={setStatusFilter}
-            categoryFilter={categoryFilter}
-            setCategoryFilter={setCategoryFilter}
-            searchQuery={searchQuery}
-            setSearchQuery={setSearchQuery}
-          />
+              <Filters
+                statusFilter={statusFilter}
+                setStatusFilter={setStatusFilter}
+                categoryFilter={categoryFilter}
+                setCategoryFilter={setCategoryFilter}
+                searchQuery={searchQuery}
+                setSearchQuery={setSearchQuery}
+              />
 
-          {loading ? (
-            <p className="mt-8 text-slate-500 dark:text-slate-400 text-sm">Loading cases…</p>
-          ) : (
-            <CasesTable
-              cases={sortedCases}
-              onViewDetails={setSelectedCase}
-              sortConfig={sortConfig}
-              onSort={handleSort}
-              fraudNumbers={fraudNumbers}
+              {loading ? (
+                <p className="mt-8 text-slate-500 dark:text-slate-400 text-sm">Loading cases…</p>
+              ) : (
+                <CasesTable
+                  cases={sortedCases}
+                  onViewDetails={setSelectedCase}
+                  sortConfig={sortConfig}
+                  onSort={handleSort}
+                  fraudNumbers={fraudNumbers}
+                />
+              )}
+            </>
+          )}
+
+          {activeView === 'Cases' && (
+            <>
+              <Filters
+                statusFilter={statusFilter}
+                setStatusFilter={setStatusFilter}
+                categoryFilter={categoryFilter}
+                setCategoryFilter={setCategoryFilter}
+                searchQuery={searchQuery}
+                setSearchQuery={setSearchQuery}
+              />
+
+              {loading ? (
+                <p className="mt-8 text-slate-500 dark:text-slate-400 text-sm">Loading cases…</p>
+              ) : (
+                <CasesTable
+                  cases={sortedCases}
+                  onViewDetails={setSelectedCase}
+                  sortConfig={sortConfig}
+                  onSort={handleSort}
+                  fraudNumbers={fraudNumbers}
+                />
+              )}
+            </>
+          )}
+
+          {activeView === 'Fraud Alerts' && (
+            <>
+              <div className="flex items-start gap-2 mb-4 rounded-md border border-amber-300 dark:border-amber-700 bg-amber-50 dark:bg-amber-950 text-amber-800 dark:text-amber-300 text-sm px-4 py-3">
+                <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+                <span>Cases whose suspected number or email appears in more than one report, flagged as likely repeat scammers.</span>
+              </div>
+              {loading ? (
+                <p className="mt-8 text-slate-500 dark:text-slate-400 text-sm">Loading cases…</p>
+              ) : (
+                <CasesTable
+                  cases={fraudCases}
+                  onViewDetails={setSelectedCase}
+                  sortConfig={sortConfig}
+                  onSort={handleSort}
+                  fraudNumbers={fraudNumbers}
+                />
+              )}
+            </>
+          )}
+
+          {activeView === 'Reports' && <ReportsView cases={cases} />}
+
+          {activeView === 'Settings' && (
+            <SettingsView
+              staffEmail={auth.currentUser?.email}
+              darkMode={darkMode}
+              setDarkMode={setDarkMode}
+              onLogout={handleLogout}
+              apiBaseUrl={API_BASE_URL}
             />
           )}
         </main>
